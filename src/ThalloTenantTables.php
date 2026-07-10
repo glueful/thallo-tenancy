@@ -74,6 +74,9 @@ final class ThalloTenantTables
             'entry_schema_migrations' => self::row($inst),
             'entry_schedules' => self::row($inst),
             'form_submissions' => self::row($inst),
+            'media_assets' => self::row($inst, [], 'media_assets'),
+            'media_meta' => self::row($inst),
+            'media_usage' => self::row($inst),
             // settings: the site subset is tenant-owned (system keys move to the channel). INSTANCE
             // (per-tenant site data/config), NOT a schema definition — matters for divergence
             // checks + diagnostics. PK is `key` => (tenant_uuid, key), so needs a rebuild backfill.

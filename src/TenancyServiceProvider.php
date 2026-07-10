@@ -8,7 +8,14 @@ use Glueful\Bootstrap\ApplicationContext;
 use Glueful\Database\Execution\QueryExecutor;
 use Glueful\Database\Migrations\MigrationPriority;
 use Glueful\Extensions\Contracts\Tenancy\TenantTableRegistry as TenantTableRegistryContract;
+use Glueful\Extensions\Contracts\Tenancy\TenantContextRunner;
+use Glueful\Extensions\Contracts\Tenancy\TenantRuntimeReadiness;
+use Glueful\Extensions\Contracts\Tenancy\TenantEnforcementProbe;
+use Glueful\Uploader\Contracts\BlobAccessPolicy;
+use Glueful\Uploader\Contracts\BlobCreatedHook;
 use Glueful\Database\Connection;
+use Glueful\Cache\CacheStore;
+use Glueful\Extensions\Contracts\Tenancy\CurrentTenantResolver;
 use Glueful\Extensions\ServiceProvider;
 use PDO;
 use Psr\Container\ContainerInterface;
@@ -18,6 +25,9 @@ use Thallo\Contracts\Settings\SystemChannel;
 use Thallo\Contracts\Tenancy\WriteBarrier;
 use Thallo\Tenancy\Retrofit\AdditiveRetrofit;
 use Thallo\Tenancy\Retrofit\DefaultTenant;
+use Thallo\Tenancy\Retrofit\MediaOwnershipBackfill;
+use Thallo\Tenancy\Retrofit\MutationBoundaryLock;
+use Thallo\Tenancy\Retrofit\MutationQuiescenceWrapper;
 use Thallo\Tenancy\Retrofit\RetrofitDdlFactory;
 use Thallo\Tenancy\Retrofit\RetrofitDiagnostics;
 use Thallo\Tenancy\Retrofit\RetrofitMaintenanceGuard;
@@ -29,6 +39,20 @@ use Thallo\Tenancy\Retrofit\SchemaRetrofit;
 use Thallo\Tenancy\Retrofit\TableRebuilder;
 use Thallo\Tenancy\Retrofit\UniquenessPreflight;
 use Thallo\Tenancy\System\SystemFlags;
+use Thallo\Tenancy\Runtime\TenancyRuntimeReadiness as CompositeTenantRuntimeReadiness;
+use Thallo\Tenancy\Runtime\BootstrapDefaultTenantMiddleware;
+use Thallo\Tenancy\Runtime\BootstrapTenantCreationGuard;
+use Thallo\Tenancy\Runtime\CollectionsDisabledWhenTenantMiddleware;
+use Thallo\Tenancy\Runtime\TenantSystemMiddleware;
+use Thallo\Tenancy\Cache\CacheTransition;
+use Thallo\Tenancy\Cache\TenantCacheSegment;
+use Thallo\Tenancy\Enablement\ExtensionActivation;
+use Thallo\Tenancy\Enablement\ExtensionActivationContract;
+use Thallo\Tenancy\Enablement\FinalizationProbe;
+use Thallo\Tenancy\Enablement\EnablementLock;
+use Thallo\Tenancy\Enablement\EnablementStore;
+use Thallo\Tenancy\Enablement\TenancyEnablement;
+use Thallo\Tenancy\Http\Controllers\TenancyEnablementController;
 
 final class TenancyServiceProvider extends ServiceProvider
 {
@@ -46,6 +70,74 @@ final class TenancyServiceProvider extends ServiceProvider
             SystemChannel::class => [
                 'factory' => [self::class, 'makeSystemChannel'],
                 'shared' => true,
+            ],
+            TenantRuntimeReadiness::class => [
+                'factory' => [self::class, 'makeReadiness'],
+                'shared' => true,
+            ],
+            TenantCacheSegment::class => [
+                'factory' => [self::class, 'makeCacheSegment'],
+                'shared' => true,
+            ],
+            CacheTransition::class => [
+                'class' => CacheTransition::class,
+                'shared' => true,
+                'autowire' => true,
+            ],
+            ExtensionActivation::class => [
+                'class' => ExtensionActivation::class,
+                'shared' => true,
+                'autowire' => true,
+            ],
+            ExtensionActivationContract::class => [
+                'factory' => [self::class, 'makeExtensionActivation'],
+                'shared' => true,
+            ],
+            EnablementStore::class => [
+                'class' => EnablementStore::class,
+                'shared' => true,
+                'autowire' => true,
+            ],
+            EnablementLock::class => [
+                'class' => EnablementLock::class,
+                'shared' => true,
+                'autowire' => true,
+            ],
+            TenancyEnablement::class => [
+                'class' => TenancyEnablement::class,
+                'shared' => true,
+                'autowire' => true,
+            ],
+            TenancyEnablementController::class => [
+                'class' => TenancyEnablementController::class,
+                'shared' => true,
+                'autowire' => true,
+            ],
+            FinalizationProbe::class => [
+                'factory' => [self::class, 'makeFinalizationProbe'],
+                'shared' => true,
+            ],
+            BootstrapDefaultTenantMiddleware::class => [
+                'factory' => [self::class, 'makeBootstrapMiddleware'],
+                'shared' => true,
+                'alias' => ['tenant_bootstrap'],
+            ],
+            BootstrapTenantCreationGuard::class => [
+                'class' => BootstrapTenantCreationGuard::class,
+                'shared' => true,
+                'autowire' => true,
+            ],
+            CollectionsDisabledWhenTenantMiddleware::class => [
+                'class' => CollectionsDisabledWhenTenantMiddleware::class,
+                'shared' => true,
+                'autowire' => true,
+                'alias' => ['collections_disabled_when_tenant'],
+            ],
+            TenantSystemMiddleware::class => [
+                'class' => TenantSystemMiddleware::class,
+                'shared' => true,
+                'autowire' => true,
+                'alias' => ['tenant_system'],
             ],
             RetrofitProgress::class => [
                 'class' => RetrofitProgress::class,
@@ -139,6 +231,21 @@ final class TenancyServiceProvider extends ServiceProvider
                 'shared' => true,
                 'autowire' => true,
             ],
+            MediaOwnershipBackfill::class => [
+                'class' => MediaOwnershipBackfill::class,
+                'shared' => true,
+                'autowire' => true,
+            ],
+            MutationBoundaryLock::class => [
+                'class' => MutationBoundaryLock::class,
+                'shared' => true,
+                'autowire' => true,
+            ],
+            MutationQuiescenceWrapper::class => [
+                'class' => MutationQuiescenceWrapper::class,
+                'shared' => true,
+                'autowire' => true,
+            ],
         ];
     }
 
@@ -155,9 +262,68 @@ final class TenancyServiceProvider extends ServiceProvider
         return $container->get(SystemFlags::class);
     }
 
+    public static function makeExtensionActivation(ContainerInterface $container): ExtensionActivationContract
+    {
+        return $container->get(ExtensionActivation::class);
+    }
+
     public static function makeWriteBarrier(ContainerInterface $container): WriteBarrier
     {
         return $container->get(RetrofitMaintenanceGuard::class);
+    }
+
+    public static function makeReadiness(ContainerInterface $container): TenantRuntimeReadiness
+    {
+        $runner = $container->has(TenantContextRunner::class)
+            ? $container->get(TenantContextRunner::class)
+            : null;
+
+        return new CompositeTenantRuntimeReadiness(
+            $container->get(SystemFlags::class),
+            $container->get(Connection::class),
+            $runner,
+        );
+    }
+
+    public static function makeCacheSegment(ContainerInterface $container): TenantCacheSegment
+    {
+        $resolver = $container->has(CurrentTenantResolver::class)
+            ? $container->get(CurrentTenantResolver::class)
+            : null;
+
+        return new TenantCacheSegment($container->get(SystemFlags::class), $resolver);
+    }
+
+    public static function makeBootstrapMiddleware(ContainerInterface $container): BootstrapDefaultTenantMiddleware
+    {
+        $resolver = $container->has(CurrentTenantResolver::class)
+            ? $container->get(CurrentTenantResolver::class)
+            : null;
+        $runner = $container->has(TenantContextRunner::class)
+            ? $container->get(TenantContextRunner::class)
+            : null;
+
+        return new BootstrapDefaultTenantMiddleware(
+            $container->get(ApplicationContext::class),
+            $container->get(SystemFlags::class),
+            $container->get(TenantRuntimeReadiness::class),
+            $resolver,
+            $runner,
+        );
+    }
+
+    public static function makeFinalizationProbe(ContainerInterface $container): FinalizationProbe
+    {
+        return new FinalizationProbe(
+            $container->get(SystemFlags::class),
+            $container->get(Connection::class),
+            $container->get(TenantRuntimeReadiness::class),
+            $container->get(TenantCacheSegment::class),
+            $container->has(TenantContextRunner::class) ? $container->get(TenantContextRunner::class) : null,
+            $container->has(TenantEnforcementProbe::class) ? $container->get(TenantEnforcementProbe::class) : null,
+            $container->has(BlobCreatedHook::class) ? $container->get(BlobCreatedHook::class) : null,
+            $container->has(BlobAccessPolicy::class) ? $container->get(BlobAccessPolicy::class) : null,
+        );
     }
 
     public function register(ApplicationContext $context): void
@@ -196,6 +362,10 @@ final class TenancyServiceProvider extends ServiceProvider
         $guard = app($context, RetrofitMaintenanceGuard::class);
         $guard->refresh();
         QueryExecutor::addQueryInterceptor(app($context, RetrofitWriteBarrierInterceptor::class));
+        QueryExecutor::addExecutionWrapper(app($context, MutationQuiescenceWrapper::class));
+
+        $this->loadRoutesFrom(__DIR__ . '/../routes/enablement.php');
+        $this->discoverCommands('Thallo\\Tenancy\\Console', __DIR__ . '/Console');
     }
 
     /**

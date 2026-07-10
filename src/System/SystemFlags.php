@@ -9,11 +9,11 @@ use Thallo\Contracts\Settings\SystemChannel;
 
 /**
  * Thin key/value store over the unscoped `thallo_system_flags` table — the runtime tenancy state
- * that must be readable before tenant resolution. Modeled on App\Settings\SettingsStore, but
+ * that must be readable before tenant resolution. Modeled on the application's settings store, but
  * system-global (never tenant-scoped). Missing table (fresh install) reads as "off".
  *
  * Also serves as the app's {@see SystemChannel}: its get/put/forget are the unscoped home for
- * system settings keys (see App\Settings\SystemKeys), keeping them out of the scoped `settings` table.
+ * system settings keys, keeping them out of the scoped `settings` table.
  */
 final class SystemFlags implements SystemChannel
 {
