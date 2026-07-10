@@ -19,10 +19,10 @@ final class BootstrapTenantCreationGuard
 
     public function assertCanCreateTenant(): void
     {
-        if ($this->readiness->mode($this->context) === TenantRuntimeReadiness::MODE_BOOTSTRAP_DEFAULT) {
+        if ($this->readiness->mode($this->context) !== TenantRuntimeReadiness::MODE_FULL_RESOLUTION) {
             throw new EnablementException(
-                'A second tenant cannot be created while single-tenant bootstrap resolution is active. '
-                . 'Enable full multi-tenant resolution first.',
+                'Tenant creation requires full multi-tenant resolution. Run '
+                . '`thallo:tenancy:resolution:activate` first.',
             );
         }
     }

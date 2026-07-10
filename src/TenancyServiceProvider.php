@@ -11,6 +11,8 @@ use Glueful\Extensions\Contracts\Tenancy\TenantTableRegistry as TenantTableRegis
 use Glueful\Extensions\Contracts\Tenancy\TenantContextRunner;
 use Glueful\Extensions\Contracts\Tenancy\TenantRuntimeReadiness;
 use Glueful\Extensions\Contracts\Tenancy\TenantEnforcementProbe;
+use Glueful\Extensions\Contracts\Tenancy\FullTenantResolutionReadiness;
+use Glueful\Extensions\Contracts\Tenancy\TenantDomainAdministration;
 use Glueful\Uploader\Contracts\BlobAccessPolicy;
 use Glueful\Uploader\Contracts\BlobCreatedHook;
 use Glueful\Database\Connection;
@@ -23,6 +25,8 @@ use Thallo\Contracts\Capability\Capability;
 use Thallo\Contracts\Capability\CapabilityRegistry;
 use Thallo\Contracts\Settings\SystemChannel;
 use Thallo\Contracts\Tenancy\WriteBarrier;
+use Thallo\Contracts\Tenancy\TenantWriteScope;
+use Thallo\Tenancy\Compat\CompatWriteScope;
 use Thallo\Tenancy\Retrofit\AdditiveRetrofit;
 use Thallo\Tenancy\Retrofit\DefaultTenant;
 use Thallo\Tenancy\Retrofit\MediaOwnershipBackfill;
@@ -44,15 +48,28 @@ use Thallo\Tenancy\Runtime\BootstrapDefaultTenantMiddleware;
 use Thallo\Tenancy\Runtime\BootstrapTenantCreationGuard;
 use Thallo\Tenancy\Runtime\CollectionsDisabledWhenTenantMiddleware;
 use Thallo\Tenancy\Runtime\TenantSystemMiddleware;
+use Thallo\Tenancy\Runtime\TenantProfileMiddleware;
 use Thallo\Tenancy\Cache\CacheTransition;
 use Thallo\Tenancy\Cache\TenantCacheSegment;
+use Thallo\Tenancy\Cache\TenantHostCachePurger;
 use Thallo\Tenancy\Enablement\ExtensionActivation;
 use Thallo\Tenancy\Enablement\ExtensionActivationContract;
 use Thallo\Tenancy\Enablement\FinalizationProbe;
 use Thallo\Tenancy\Enablement\EnablementLock;
 use Thallo\Tenancy\Enablement\EnablementStore;
 use Thallo\Tenancy\Enablement\TenancyEnablement;
+use Thallo\Tenancy\Enablement\DisableGates;
+use Thallo\Tenancy\Enablement\DisableProbe;
+use Thallo\Tenancy\Enablement\TenancyDiagnostics;
 use Thallo\Tenancy\Http\Controllers\TenancyEnablementController;
+use Thallo\Tenancy\Http\Controllers\TenancyResolutionController;
+use Thallo\Tenancy\Http\Controllers\TenantDirectoryController;
+use Thallo\Tenancy\Http\Controllers\TenantManagementController;
+use Thallo\Tenancy\Http\Controllers\TenantDomainController;
+use Thallo\Tenancy\Http\Controllers\TenantMembershipController;
+use Thallo\Tenancy\Resolution\ThalloFullResolutionReadiness;
+use Thallo\Tenancy\Resolution\ResolutionActivationStore;
+use Thallo\Tenancy\Resolution\FullResolutionActivation;
 
 final class TenancyServiceProvider extends ServiceProvider
 {
@@ -65,6 +82,14 @@ final class TenancyServiceProvider extends ServiceProvider
                 'shared' => true,
                 'autowire' => true,
             ],
+            CompatWriteScope::class => [
+                'factory' => [self::class, 'makeCompatWriteScope'],
+                'shared' => true,
+            ],
+            TenantWriteScope::class => [
+                'factory' => [self::class, 'makeTenantWriteScope'],
+                'shared' => true,
+            ],
             // The unscoped system-settings channel IS SystemFlags — alias to the same shared
             // instance (factory, not a second `class` binding) so every consumer shares one cache.
             SystemChannel::class => [
@@ -75,12 +100,31 @@ final class TenancyServiceProvider extends ServiceProvider
                 'factory' => [self::class, 'makeReadiness'],
                 'shared' => true,
             ],
+            FullTenantResolutionReadiness::class => [
+                'factory' => [self::class, 'makeFullResolutionReadiness'],
+                'shared' => true,
+            ],
+            ResolutionActivationStore::class => [
+                'class' => ResolutionActivationStore::class,
+                'shared' => true,
+                'autowire' => true,
+            ],
+            FullResolutionActivation::class => [
+                'class' => FullResolutionActivation::class,
+                'shared' => true,
+                'autowire' => true,
+            ],
             TenantCacheSegment::class => [
                 'factory' => [self::class, 'makeCacheSegment'],
                 'shared' => true,
             ],
             CacheTransition::class => [
                 'class' => CacheTransition::class,
+                'shared' => true,
+                'autowire' => true,
+            ],
+            TenantHostCachePurger::class => [
+                'class' => TenantHostCachePurger::class,
                 'shared' => true,
                 'autowire' => true,
             ],
@@ -103,6 +147,21 @@ final class TenancyServiceProvider extends ServiceProvider
                 'shared' => true,
                 'autowire' => true,
             ],
+            DisableGates::class => [
+                'class' => DisableGates::class,
+                'shared' => true,
+                'autowire' => true,
+            ],
+            DisableProbe::class => [
+                'class' => DisableProbe::class,
+                'shared' => true,
+                'autowire' => true,
+            ],
+            TenancyDiagnostics::class => [
+                'class' => TenancyDiagnostics::class,
+                'shared' => true,
+                'autowire' => true,
+            ],
             TenancyEnablement::class => [
                 'class' => TenancyEnablement::class,
                 'shared' => true,
@@ -110,6 +169,31 @@ final class TenancyServiceProvider extends ServiceProvider
             ],
             TenancyEnablementController::class => [
                 'class' => TenancyEnablementController::class,
+                'shared' => true,
+                'autowire' => true,
+            ],
+            TenancyResolutionController::class => [
+                'class' => TenancyResolutionController::class,
+                'shared' => true,
+                'autowire' => true,
+            ],
+            TenantDirectoryController::class => [
+                'class' => TenantDirectoryController::class,
+                'shared' => true,
+                'autowire' => true,
+            ],
+            TenantManagementController::class => [
+                'class' => TenantManagementController::class,
+                'shared' => true,
+                'autowire' => true,
+            ],
+            TenantDomainController::class => [
+                'class' => TenantDomainController::class,
+                'shared' => true,
+                'autowire' => true,
+            ],
+            TenantMembershipController::class => [
+                'class' => TenantMembershipController::class,
                 'shared' => true,
                 'autowire' => true,
             ],
@@ -138,6 +222,12 @@ final class TenancyServiceProvider extends ServiceProvider
                 'shared' => true,
                 'autowire' => true,
                 'alias' => ['tenant_system'],
+            ],
+            TenantProfileMiddleware::class => [
+                'class' => TenantProfileMiddleware::class,
+                'shared' => true,
+                'autowire' => true,
+                'alias' => ['tenant_profile'],
             ],
             RetrofitProgress::class => [
                 'class' => RetrofitProgress::class,
@@ -262,6 +352,21 @@ final class TenancyServiceProvider extends ServiceProvider
         return $container->get(SystemFlags::class);
     }
 
+    public static function makeCompatWriteScope(ContainerInterface $container): CompatWriteScope
+    {
+        $flags = $container->get(SystemFlags::class);
+        return new CompatWriteScope(
+            $flags->tenancyEnabled(),
+            $flags->schemaState(),
+            $flags->defaultTenantUuid(),
+        );
+    }
+
+    public static function makeTenantWriteScope(ContainerInterface $container): TenantWriteScope
+    {
+        return $container->get(CompatWriteScope::class);
+    }
+
     public static function makeExtensionActivation(ContainerInterface $container): ExtensionActivationContract
     {
         return $container->get(ExtensionActivation::class);
@@ -292,6 +397,19 @@ final class TenancyServiceProvider extends ServiceProvider
             : null;
 
         return new TenantCacheSegment($container->get(SystemFlags::class), $resolver);
+    }
+
+    public static function makeFullResolutionReadiness(
+        ContainerInterface $container
+    ): FullTenantResolutionReadiness {
+        $domains = $container->has(TenantDomainAdministration::class)
+            ? $container->get(TenantDomainAdministration::class)
+            : null;
+
+        return new ThalloFullResolutionReadiness(
+            $container->get(SystemFlags::class),
+            $domains,
+        );
     }
 
     public static function makeBootstrapMiddleware(ContainerInterface $container): BootstrapDefaultTenantMiddleware
@@ -361,6 +479,12 @@ final class TenancyServiceProvider extends ServiceProvider
         // the interceptor is a no-op fast-path on every query.
         $guard = app($context, RetrofitMaintenanceGuard::class);
         $guard->refresh();
+        $compat = app($context, CompatWriteScope::class);
+        if ($compat->mode() === 'compat') {
+            Connection::addInsertHook(
+                static fn(string $table, array $row): array => $compat->stampIfMissing($table, $row)
+            );
+        }
         QueryExecutor::addQueryInterceptor(app($context, RetrofitWriteBarrierInterceptor::class));
         QueryExecutor::addExecutionWrapper(app($context, MutationQuiescenceWrapper::class));
 
