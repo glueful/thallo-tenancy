@@ -66,6 +66,11 @@ final class TenancyEnablementController
         return $this->guarded(fn (): array => $this->enablement->finalize()->toArray());
     }
 
+    public function disable(): Response
+    {
+        return $this->guarded(fn (): array => $this->enablement->disable()->toArray());
+    }
+
     /** @param callable(): array<string, bool|int|string|null> $operation */
     private function guarded(callable $operation): Response
     {

@@ -14,7 +14,8 @@ namespace Thallo\Tenancy\Enablement;
  * `reloading` = retrofit done, tenancy.enabled=1, BARRIER STILL UP. `finalizing` = a fresh-process
  * finalize() CLAIMED the transition (barrier still up) and is verifying enforcement; a crash here is
  * recoverable. Only the final atomic step (lower barrier + set `on` in ONE system-channel transaction)
- * reaches `on`. Distinct from the runtime gate (SystemFlags::tenancyEnabled()). No disable state here.
+ * reaches `on`. Disable mirrors that discipline: on -> disabling -> disabled_widened, with the
+ * persisted retrofit barrier distinguishing an awaiting-fresh-boot pair from a settled pair.
  */
 enum EnablementStep: string
 {
@@ -29,6 +30,8 @@ enum EnablementStep: string
     case RELOADING = 'reloading';
     case FINALIZING = 'finalizing';
     case ON = 'on';
+    case DISABLING = 'disabling';
+    case DISABLED_WIDENED = 'disabled_widened';
     case FAILED = 'failed';
 
     /** Steps that REQUIRE a fresh process before the machine can advance (CLI/HTTP must stop + re-request). */
@@ -50,6 +53,8 @@ enum EnablementStep: string
             self::RELOADING => 90,
             self::FINALIZING => 95,
             self::ON => 100,
+            self::DISABLING => 10,
+            self::DISABLED_WIDENED => 100,
             self::FAILED => 0,
         };
     }

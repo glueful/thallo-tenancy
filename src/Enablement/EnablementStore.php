@@ -20,6 +20,7 @@ final class EnablementStore
     private const KEY_FAILED_FROM = 'tenancy.enable_failed_from';
     private const KEY_PENDING_SLUG = 'tenancy.enable_pending_slug';
     private const KEY_PENDING_NAME = 'tenancy.enable_pending_name';
+    private const KEY_DISABLE_SENTINEL = 'tenancy.disable_sentinel';
 
     public function __construct(private readonly SystemFlags $flags)
     {
@@ -100,5 +101,20 @@ final class EnablementStore
     {
         $this->flags->forget(self::KEY_PENDING_SLUG);
         $this->flags->forget(self::KEY_PENDING_NAME);
+    }
+
+    public function sentinelKey(): ?string
+    {
+        return $this->flags->get(self::KEY_DISABLE_SENTINEL);
+    }
+
+    public function setSentinelKey(string $key): void
+    {
+        $this->flags->put(self::KEY_DISABLE_SENTINEL, $key);
+    }
+
+    public function clearSentinel(): void
+    {
+        $this->flags->forget(self::KEY_DISABLE_SENTINEL);
     }
 }
