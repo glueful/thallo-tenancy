@@ -4,9 +4,9 @@ declare(strict_types=1);
 
 namespace Thallo\Tenancy\Retrofit;
 
-use App\Settings\SystemKeyReconciler;
 use Glueful\Database\Connection;
 use RuntimeException;
+use Thallo\Contracts\Settings\SystemKeyReconciler;
 use Thallo\Tenancy\System\SystemFlags;
 use Thallo\Tenancy\ThalloTenantTables;
 
@@ -52,6 +52,8 @@ final class SchemaRetrofit
         private readonly TableRebuilder $rebuilder,
         private readonly RetrofitDiagnostics $diagnostics,
         private readonly SystemFlags $flags,
+        private readonly MediaOwnershipBackfill $mediaOwnership,
+        private readonly MutationBoundaryLock $mutationLock,
     ) {
     }
 
@@ -80,47 +82,57 @@ final class SchemaRetrofit
         /** @var list<string> $movedKeys */
         $movedKeys = $this->guard->runInternal(fn (): array => $this->reconciler->reconcile());
 
-        // 6. Widen each present owned table. Raw PDO — bypasses the barrier by design.
-        $widened = [];
-        foreach (ThalloTenantTables::all() as $table => $meta) {
-            if (!$this->tableExists($table)) {
-                continue; // absent (uninstalled pack) — the retrofit skips it, not a divergence
+        $this->mutationLock->acquireExclusive();
+        try {
+            // Existing framework blobs predate tenant ownership. Attribute them before the additive
+            // media_assets path promotes tenant_uuid to NOT NULL.
+            $this->mediaOwnership->run($tenantUuid);
+
+            // 6. Widen each present owned table. Raw PDO — bypasses the barrier by design.
+            $widened = [];
+            foreach (ThalloTenantTables::all() as $table => $meta) {
+                if (!$this->tableExists($table)) {
+                    continue; // absent (uninstalled pack) — skip it, not a divergence
+                }
+                if ($meta['special_backfill'] === 'rebuild') {
+                    $this->rebuilder->rebuild($table);
+                } else {
+                    $this->additive->apply($table);
+                }
+                $widened[] = $table;
             }
-            if ($meta['special_backfill'] === 'rebuild') {
-                $this->rebuilder->rebuild($table);
-            } else {
-                $this->additive->apply($table);
+
+            // 7. Every present owned table must be coherent. A failure leaves the barrier UP.
+            $incoherent = [];
+            foreach ($this->diagnostics->checkTables() as $table => $result) {
+                if ($result['ok'] === false) {
+                    $incoherent[] = $table . ' (' . $result['detail'] . ')';
+                }
             }
-            $widened[] = $table;
-        }
-
-        // 7. Every present owned table must be coherently widened. A mid-failure leaves the barrier UP.
-        $incoherent = [];
-        foreach ($this->diagnostics->checkTables() as $table => $result) {
-            if ($result['ok'] === false) {
-                $incoherent[] = $table . ' (' . $result['detail'] . ')';
+            if ($incoherent !== []) {
+                throw new RuntimeException(
+                    'Schema retrofit incoherent — table(s) not fully widened: '
+                    . implode('; ', $incoherent) . '.'
+                );
             }
-        }
-        if ($incoherent !== []) {
-            throw new RuntimeException(
-                'Schema retrofit incoherent — table(s) not fully widened: ' . implode('; ', $incoherent) . '.'
-            );
-        }
 
-        // 8. Record the widened schema state.
-        $this->flags->put('tenancy.schema_state', 'widened');
+            // 8. Record the widened schema state.
+            $this->flags->put('tenancy.schema_state', 'widened');
 
-        // 9. The persisted flag must agree with the live schema.
-        $agreement = $this->diagnostics->checkAgreement();
-        if ($agreement['ok'] === false) {
-            throw new RuntimeException(
-                'Schema retrofit flag/reality disagreement after widening: '
-                . (string) json_encode($agreement['detail']) . '.'
-            );
+            // 9. The persisted flag must agree with the live schema.
+            $agreement = $this->diagnostics->checkAgreement();
+            if ($agreement['ok'] === false) {
+                throw new RuntimeException(
+                    'Schema retrofit flag/reality disagreement after widening: '
+                    . (string) json_encode($agreement['detail']) . '.'
+                );
+            }
+
+            // Barrier stays UP on success — Phase E lowers it with the transition to `on`.
+            return new RetrofitReport($tenantUuid, $widened, $movedKeys);
+        } finally {
+            $this->mutationLock->releaseExclusive();
         }
-
-        // 10. Barrier stays UP on success — Phase E lowers it atomically with the transition to `on`.
-        return new RetrofitReport($tenantUuid, $widened, $movedKeys);
     }
 
     /** Live table presence — never a phase marker or cached declaration. */

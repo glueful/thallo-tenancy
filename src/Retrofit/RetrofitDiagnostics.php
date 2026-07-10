@@ -65,8 +65,9 @@ final class RetrofitDiagnostics
 
     /**
      * Does the persisted schema_state agree with the live schema? `none` agrees when NO present owned
-     * table is widened (carries a `tenant_uuid` column); `widened` agrees when EVERY present owned table
-     * is coherent. Comparison only — never requires the flag to be widened first.
+     * table is coherently widened; nullable staging columns are allowed before enablement (media
+     * ownership uses one for pre-attribution). `widened` agrees when EVERY present owned table is
+     * coherent. Comparison only — never requires the flag to be widened first.
      *
      * @return array{ok: bool, detail: array<string, mixed>}
      */
@@ -77,7 +78,7 @@ final class RetrofitDiagnostics
         if ($state === 'none') {
             $widened = [];
             foreach (ThalloTenantTables::all() as $table => $meta) {
-                if ($this->tableExists($table) && $this->introspector->columnExists($table, $meta['tenant_column'])) {
+                if ($this->tableExists($table) && $this->tableCoherence($table, $meta)['ok']) {
                     $widened[] = $table;
                 }
             }

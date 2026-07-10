@@ -22,8 +22,10 @@ final class RetrofitMaintenanceGuard implements WriteBarrier
     /** Hot-path state; NEVER read from the DB inside the interceptor. */
     private bool $active = false;
 
-    public function __construct(private readonly SystemFlags $flags)
-    {
+    public function __construct(
+        private readonly SystemFlags $flags,
+        private readonly MutationBoundaryLock $mutationLock,
+    ) {
     }
 
     /** Called ONCE at boot, before the interceptor is registered — safe to read persistence. */
@@ -65,6 +67,20 @@ final class RetrofitMaintenanceGuard implements WriteBarrier
         $this->active = $persistedActive; // refresh in-memory both ways
         if ($persistedActive) {
             throw new RetrofitInProgressException();
+        }
+    }
+
+    public function runWritable(callable $operation): mixed
+    {
+        $this->assertWritable();
+        if (!$this->mutationLock->tryShared()) {
+            throw new RetrofitInProgressException();
+        }
+
+        try {
+            return $operation();
+        } finally {
+            $this->mutationLock->releaseShared();
         }
     }
 
