@@ -35,6 +35,11 @@ final class BootstrapDefaultTenantMiddleware implements RouteMiddleware
             return $next($request);
         }
 
+        $optional = in_array('optional', array_map('strval', $params), true);
+        if ($optional && $this->readiness->mode($this->context) !== TenantRuntimeReadiness::MODE_BOOTSTRAP_DEFAULT) {
+            return $next($request);
+        }
+
         if (
             $this->runner === null
             || $this->readiness->mode($this->context) !== TenantRuntimeReadiness::MODE_BOOTSTRAP_DEFAULT

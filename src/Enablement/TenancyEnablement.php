@@ -152,6 +152,20 @@ final class TenancyEnablement
                 return $this->status();
             }
 
+            if ($step === EnablementStep::MIGRATING_EXTENSION) {
+                $migration = $this->activation->migrate();
+                if ($migration['failed'] !== []) {
+                    $this->store->recordFailure(
+                        EnablementStep::MIGRATING_EXTENSION,
+                        'Extension migration failed: ' . implode(', ', $migration['failed']),
+                    );
+                    return $this->status();
+                }
+
+                $this->store->setStep(EnablementStep::AWAITING_CONFIRM);
+                return $this->status();
+            }
+
             return $this->status();
         });
     }

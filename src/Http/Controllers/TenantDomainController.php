@@ -6,6 +6,7 @@ namespace Thallo\Tenancy\Http\Controllers;
 
 use Glueful\Bootstrap\ApplicationContext;
 use Glueful\Extensions\Contracts\Tenancy\TenantDomainAdministration;
+use Glueful\Extensions\Contracts\Tenancy\CurrentTenantResolver;
 use Glueful\Http\Response;
 use Symfony\Component\HttpFoundation\Request;
 use Thallo\Tenancy\Cache\TenantHostCachePurger;
@@ -16,11 +17,15 @@ final class TenantDomainController
         private readonly ApplicationContext $context,
         private readonly TenantHostCachePurger $cache,
         private readonly ?TenantDomainAdministration $domains = null,
+        private readonly ?CurrentTenantResolver $resolver = null,
     ) {
     }
 
     public function index(string $uuid): Response
     {
+        if (!$this->targetMatches($uuid)) {
+            return $this->forbidden();
+        }
         if ($this->domains === null) {
             return $this->unavailable();
         }
@@ -29,6 +34,9 @@ final class TenantDomainController
 
     public function create(Request $request, string $uuid): Response
     {
+        if (!$this->targetMatches($uuid)) {
+            return $this->forbidden();
+        }
         if ($this->domains === null) {
             return $this->unavailable();
         }
@@ -103,6 +111,9 @@ final class TenantDomainController
         if ($domain === null) {
             return Response::notFound('Tenant domain was not found.');
         }
+        if (!$this->targetMatches((string) $domain['tenant_uuid'])) {
+            return Response::notFound('Tenant domain was not found.');
+        }
         $response = $this->mutate($operation);
         if ($response->getStatusCode() < 400) {
             $this->cache->purgeForTenant($domain['tenant_uuid']);
@@ -117,5 +128,16 @@ final class TenantDomainController
             'Tenant domain administration is unavailable.',
             Response::HTTP_SERVICE_UNAVAILABLE
         );
+    }
+
+    private function targetMatches(string $tenantUuid): bool
+    {
+        return $this->resolver !== null
+            && hash_equals($tenantUuid, $this->resolver->tenantUuid($this->context));
+    }
+
+    private function forbidden(): Response
+    {
+        return Response::error('Forbidden', Response::HTTP_FORBIDDEN, ['code' => 'FORBIDDEN']);
     }
 }

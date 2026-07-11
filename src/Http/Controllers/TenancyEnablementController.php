@@ -10,17 +10,25 @@ use Thallo\Tenancy\Enablement\EnablementException;
 use Thallo\Tenancy\Enablement\EnablementLockedException;
 use Thallo\Tenancy\Enablement\RequestResolutionNotReadyException;
 use Thallo\Tenancy\Enablement\StaleStateException;
+use Thallo\Tenancy\Enablement\TenancyDiagnostics;
 use Thallo\Tenancy\Enablement\TenancyEnablement;
 
 final class TenancyEnablementController
 {
-    public function __construct(private readonly TenancyEnablement $enablement)
-    {
+    public function __construct(
+        private readonly TenancyEnablement $enablement,
+        private readonly TenancyDiagnostics $diagnostics,
+    ) {
     }
 
     public function status(): Response
     {
         return Response::success(['tenancy' => $this->enablement->status()->toArray()]);
+    }
+
+    public function diagnose(): Response
+    {
+        return Response::success(['report' => $this->diagnostics->report()]);
     }
 
     public function begin(): Response

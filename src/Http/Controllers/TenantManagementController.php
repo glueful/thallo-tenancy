@@ -11,6 +11,7 @@ use Glueful\Http\Response;
 use Symfony\Component\HttpFoundation\Request;
 use Thallo\Tenancy\Enablement\EnablementException;
 use Thallo\Tenancy\Contracts\TenantSeedActivator;
+use Thallo\Tenancy\Contracts\TenantSeedRepair;
 use Thallo\Tenancy\Runtime\BootstrapTenantCreationGuard;
 use Thallo\Tenancy\StarterSeedException;
 
@@ -21,6 +22,7 @@ final class TenantManagementController
         private readonly BootstrapTenantCreationGuard $creationGuard,
         private readonly ?TenantAdministration $tenants = null,
         private readonly ?TenantSeedActivator $seeder = null,
+        private readonly ?TenantSeedRepair $seedRepair = null,
     ) {
     }
 
@@ -94,6 +96,29 @@ final class TenantManagementController
         return $this->transition(function () use ($uuid): void {
             $this->tenants->reactivate($this->context, $uuid);
         });
+    }
+
+    public function seed(string $uuid): Response
+    {
+        if ($this->seedRepair === null) {
+            return $this->unavailable();
+        }
+
+        try {
+            $this->seedRepair->repair($uuid);
+            return Response::success(['tenant' => ['uuid' => $uuid, 'status' => 'active']]);
+        } catch (StarterSeedException $exception) {
+            return Response::error(
+                'Starter seeding failed.',
+                Response::HTTP_UNPROCESSABLE_ENTITY,
+                [
+                    'tenant_uuid' => $uuid,
+                    'failed_definition' => $exception->definitionLabel,
+                ],
+            );
+        } catch (\DomainException | \RuntimeException $exception) {
+            return Response::validation(['repair' => [$exception->getMessage()]]);
+        }
     }
 
     /** @param callable():void $operation */

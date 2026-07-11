@@ -6,6 +6,7 @@ namespace Thallo\Tenancy\Http\Controllers;
 
 use Glueful\Bootstrap\ApplicationContext;
 use Glueful\Extensions\Contracts\Tenancy\TenantAdministration;
+use Glueful\Extensions\Contracts\Tenancy\CurrentTenantResolver;
 use Glueful\Http\Response;
 use Symfony\Component\HttpFoundation\Request;
 
@@ -14,11 +15,15 @@ final class TenantMembershipController
     public function __construct(
         private readonly ApplicationContext $context,
         private readonly ?TenantAdministration $tenants = null,
+        private readonly ?CurrentTenantResolver $resolver = null,
     ) {
     }
 
     public function index(string $uuid): Response
     {
+        if (!$this->targetMatches($uuid)) {
+            return $this->forbidden();
+        }
         if ($this->tenants === null) {
             return $this->unavailable();
         }
@@ -27,6 +32,9 @@ final class TenantMembershipController
 
     public function add(Request $request, string $uuid): Response
     {
+        if (!$this->targetMatches($uuid)) {
+            return $this->forbidden();
+        }
         if ($this->tenants === null) {
             return $this->unavailable();
         }
@@ -43,6 +51,9 @@ final class TenantMembershipController
 
     public function remove(string $uuid, string $userUuid): Response
     {
+        if (!$this->targetMatches($uuid)) {
+            return $this->forbidden();
+        }
         if ($this->tenants === null) {
             return $this->unavailable();
         }
@@ -53,6 +64,9 @@ final class TenantMembershipController
 
     public function setRole(Request $request, string $uuid, string $userUuid): Response
     {
+        if (!$this->targetMatches($uuid)) {
+            return $this->forbidden();
+        }
         if ($this->tenants === null) {
             return $this->unavailable();
         }
@@ -91,5 +105,16 @@ final class TenantMembershipController
             'Tenant membership administration is unavailable.',
             Response::HTTP_SERVICE_UNAVAILABLE
         );
+    }
+
+    private function targetMatches(string $tenantUuid): bool
+    {
+        return $this->resolver !== null
+            && hash_equals($tenantUuid, $this->resolver->tenantUuid($this->context));
+    }
+
+    private function forbidden(): Response
+    {
+        return Response::error('Forbidden', Response::HTTP_FORBIDDEN, ['code' => 'FORBIDDEN']);
     }
 }
