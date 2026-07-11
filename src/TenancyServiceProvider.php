@@ -13,6 +13,8 @@ use Glueful\Extensions\Contracts\Tenancy\TenantRuntimeReadiness;
 use Glueful\Extensions\Contracts\Tenancy\TenantEnforcementProbe;
 use Glueful\Extensions\Contracts\Tenancy\FullTenantResolutionReadiness;
 use Glueful\Extensions\Contracts\Tenancy\TenantDomainAdministration;
+use Glueful\Extensions\Contracts\Tenancy\TenantResolutionProbe;
+use Glueful\Extensions\Contracts\Tenancy\TenantAdministration;
 use Glueful\Uploader\Contracts\BlobAccessPolicy;
 use Glueful\Uploader\Contracts\BlobCreatedHook;
 use Glueful\Database\Connection;
@@ -110,9 +112,8 @@ final class TenancyServiceProvider extends ServiceProvider
                 'autowire' => true,
             ],
             FullResolutionActivation::class => [
-                'class' => FullResolutionActivation::class,
+                'factory' => [self::class, 'makeFullResolutionActivation'],
                 'shared' => true,
-                'autowire' => true,
             ],
             TenantCacheSegment::class => [
                 'factory' => [self::class, 'makeCacheSegment'],
@@ -397,6 +398,32 @@ final class TenancyServiceProvider extends ServiceProvider
             : null;
 
         return new TenantCacheSegment($container->get(SystemFlags::class), $resolver);
+    }
+
+    public static function makeFullResolutionActivation(ContainerInterface $container): FullResolutionActivation
+    {
+        // The domain/probe/tenant-admin contracts are bound only by the enabled tenancy
+        // extension; soft-resolve them so the read-only status endpoint works while off.
+        $domains = $container->has(TenantDomainAdministration::class)
+            ? $container->get(TenantDomainAdministration::class)
+            : null;
+        $probe = $container->has(TenantResolutionProbe::class)
+            ? $container->get(TenantResolutionProbe::class)
+            : null;
+        $tenants = $container->has(TenantAdministration::class)
+            ? $container->get(TenantAdministration::class)
+            : null;
+
+        return new FullResolutionActivation(
+            $container->get(ApplicationContext::class),
+            $container->get(ResolutionActivationStore::class),
+            $container->get(EnablementLock::class),
+            $container->get(SystemFlags::class),
+            $domains,
+            $probe,
+            $container->get(TenantRuntimeReadiness::class),
+            $tenants,
+        );
     }
 
     public static function makeFullResolutionReadiness(

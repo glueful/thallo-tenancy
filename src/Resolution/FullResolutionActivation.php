@@ -22,8 +22,11 @@ final class FullResolutionActivation
         private readonly ResolutionActivationStore $store,
         private readonly EnablementLock $lock,
         private readonly SystemFlags $flags,
-        private readonly TenantDomainAdministration $domains,
-        private readonly TenantResolutionProbe $probe,
+        // Bound only by the tenancy extension (active once enablement is ON). Absent while
+        // tenancy is off, so they are nullable and soft-resolved by the provider factory;
+        // status() never touches them and every activation path is gated by assertCanActivate().
+        private readonly ?TenantDomainAdministration $domains,
+        private readonly ?TenantResolutionProbe $probe,
         private readonly TenantRuntimeReadiness $readiness,
         private readonly ?TenantAdministration $tenants = null,
     ) {
@@ -115,6 +118,28 @@ final class FullResolutionActivation
         }
     }
 
+    private function domains(): TenantDomainAdministration
+    {
+        if ($this->domains === null) {
+            throw new EnablementException(
+                'Tenant domain administration is unavailable; the tenancy extension is not active.'
+            );
+        }
+
+        return $this->domains;
+    }
+
+    private function probe(): TenantResolutionProbe
+    {
+        if ($this->probe === null) {
+            throw new EnablementException(
+                'Tenant resolution probe is unavailable; the tenancy extension is not active.'
+            );
+        }
+
+        return $this->probe;
+    }
+
     private function mapHosts(): void
     {
         $default = $this->flags->defaultTenantUuid();
@@ -122,7 +147,7 @@ final class FullResolutionActivation
             throw new EnablementException('The default tenant pointer is missing.');
         }
         foreach ($this->requiredHosts() as $host) {
-            $this->domains->addPreverifiedDomain($this->context, $default, $host);
+            $this->domains()->addPreverifiedDomain($this->context, $default, $host);
         }
         $this->move(ResolutionActivationStep::MAPPING_HOSTS, ResolutionActivationStep::VERIFYING_WIRING);
     }
@@ -131,7 +156,7 @@ final class FullResolutionActivation
     {
         $default = $this->flags->defaultTenantUuid();
         foreach ($this->requiredHosts() as $host) {
-            if ($default === null || $this->probe->probePublicHost($this->context, $host) !== $default) {
+            if ($default === null || $this->probe()->probePublicHost($this->context, $host) !== $default) {
                 throw new EnablementException("Required host does not resolve to the default tenant: {$host}");
             }
         }
@@ -156,7 +181,7 @@ final class FullResolutionActivation
     {
         $default = $this->flags->defaultTenantUuid();
         foreach ($this->requiredHosts() as $host) {
-            if ($default === null || $this->probe->probePublicHost($this->context, $host) !== $default) {
+            if ($default === null || $this->probe()->probePublicHost($this->context, $host) !== $default) {
                 throw new EnablementException("Fresh-boot host probe failed: {$host}");
             }
         }
