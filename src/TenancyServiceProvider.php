@@ -72,6 +72,16 @@ use Thallo\Tenancy\Http\Controllers\TenantMembershipController;
 use Thallo\Tenancy\Resolution\ThalloFullResolutionReadiness;
 use Thallo\Tenancy\Resolution\ResolutionActivationStore;
 use Thallo\Tenancy\Resolution\FullResolutionActivation;
+use Thallo\Tenancy\Purge\Handlers\CachePurgeHandler;
+use Thallo\Tenancy\Purge\Handlers\CollectionsPurgeHandler;
+use Thallo\Tenancy\Purge\Handlers\MediaPurgeHandler;
+use Thallo\Tenancy\Purge\Handlers\TablesPurgeHandler;
+use Thallo\Tenancy\Purge\PurgeResourceRegistry;
+use Thallo\Tenancy\Purge\PurgeRunRepository;
+use Thallo\Tenancy\Purge\PurgeCoordinator;
+use Thallo\Tenancy\Reverification\DomainReverificationSweep;
+use Thallo\Tenancy\Reverification\DomainReverificationSweepLock;
+use Thallo\Tenancy\Reverification\DomainReverificationAuditListener;
 
 final class TenancyServiceProvider extends ServiceProvider
 {
@@ -337,7 +347,66 @@ final class TenancyServiceProvider extends ServiceProvider
                 'shared' => true,
                 'autowire' => true,
             ],
+            PurgeRunRepository::class => [
+                'class' => PurgeRunRepository::class,
+                'shared' => true,
+                'autowire' => true,
+            ],
+            TablesPurgeHandler::class => [
+                'class' => TablesPurgeHandler::class,
+                'shared' => true,
+                'autowire' => true,
+            ],
+            MediaPurgeHandler::class => [
+                'class' => MediaPurgeHandler::class,
+                'shared' => true,
+                'autowire' => true,
+            ],
+            CachePurgeHandler::class => [
+                'class' => CachePurgeHandler::class,
+                'shared' => true,
+                'autowire' => true,
+            ],
+            CollectionsPurgeHandler::class => [
+                'class' => CollectionsPurgeHandler::class,
+                'shared' => true,
+                'autowire' => true,
+            ],
+            PurgeResourceRegistry::class => [
+                'factory' => [self::class, 'makePurgeResourceRegistry'],
+                'shared' => true,
+            ],
+            PurgeCoordinator::class => [
+                'class' => PurgeCoordinator::class,
+                'shared' => true,
+                'autowire' => true,
+            ],
+            DomainReverificationSweep::class => [
+                'class' => DomainReverificationSweep::class,
+                'shared' => true,
+                'autowire' => true,
+            ],
+            DomainReverificationSweepLock::class => [
+                'class' => DomainReverificationSweepLock::class,
+                'shared' => true,
+                'autowire' => true,
+            ],
+            DomainReverificationAuditListener::class => [
+                'class' => DomainReverificationAuditListener::class,
+                'shared' => true,
+                'autowire' => true,
+            ],
         ];
+    }
+
+    public static function makePurgeResourceRegistry(ContainerInterface $container): PurgeResourceRegistry
+    {
+        $registry = new PurgeResourceRegistry();
+        $registry->register($container->get(MediaPurgeHandler::class));
+        $registry->register($container->get(TablesPurgeHandler::class));
+        $registry->register($container->get(CachePurgeHandler::class));
+        $registry->register($container->get(CollectionsPurgeHandler::class));
+        return $registry;
     }
 
     public static function makeRetrofitDdl(ContainerInterface $container): RetrofitDdl

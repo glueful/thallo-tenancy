@@ -48,6 +48,9 @@ $router->group(
             $router->post('/tenants/{uuid}/seed', [TenantManagementController::class, 'seed']);
             $router->post('/tenants/{uuid}/suspend', [TenantManagementController::class, 'suspend']);
             $router->post('/tenants/{uuid}/reactivate', [TenantManagementController::class, 'reactivate']);
+            $router->delete('/tenants/{uuid}', [TenantManagementController::class, 'destroy']);
+            $router->post('/tenants/{uuid}/restore', [TenantManagementController::class, 'restore']);
+            $router->post('/tenants/{uuid}/purge', [TenantManagementController::class, 'purge']);
         });
     }
 );
@@ -63,6 +66,8 @@ $router->group(
         $router->post('/tenants/{uuid}/domains', [TenantDomainController::class, 'create'])
             ->middleware('content_permission:tenant.domains.manage');
         $router->post('/domains/{uuid}/verify', [TenantDomainController::class, 'verify'])
+            ->middleware('content_permission:tenant.domains.manage');
+        $router->post('/domains/{uuid}/reverify', [TenantDomainController::class, 'reverify'])
             ->middleware('content_permission:tenant.domains.manage');
         $router->post('/domains/{uuid}/enable', [TenantDomainController::class, 'enable'])
             ->middleware('content_permission:tenant.domains.manage');

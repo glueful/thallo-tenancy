@@ -47,6 +47,7 @@ final class TenancyDiagnostics
             'enforcement' => $this->enforcementSection(),
             'provenance' => $this->provenanceSection(),
             'collections' => $this->collectionsSection(),
+            'domain_reverification' => $this->domainReverificationSection(),
             'static_write_audit' => $this->auditSection(),
         ];
 
@@ -149,6 +150,23 @@ final class TenancyDiagnostics
             && $audit['bucketViolations'] === []
             && $audit['wrapperMismatches'] === [];
         return $this->section($ok, $audit);
+    }
+
+    /** @return array{status:string,detail:mixed} */
+    private function domainReverificationSection(): array
+    {
+        if (!$this->connection->getSchemaBuilder()->hasTable('tenant_domains')) {
+            return ['status' => 'info', 'detail' => 'Tenant domains table is not installed.'];
+        }
+        $statement = $this->connection->getPDO()->query(
+            "SELECT uuid FROM tenant_domains WHERE verification_status NOT IN "
+            . "('pending','verified','revoked') OR (last_check_status IS NOT NULL "
+            . "AND last_check_status NOT IN ('verified','dns_error','mismatch')) "
+            . 'OR consecutive_failures < 0 ORDER BY uuid'
+        );
+        $domains = array_map('strval', $statement->fetchAll(\PDO::FETCH_COLUMN));
+
+        return $this->section($domains === [], ['incoherent_domain_uuids' => $domains]);
     }
 
     /** @return array{status:string,detail:mixed} */

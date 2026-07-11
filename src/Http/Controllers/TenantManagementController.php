@@ -14,6 +14,8 @@ use Thallo\Tenancy\Contracts\TenantSeedActivator;
 use Thallo\Tenancy\Contracts\TenantSeedRepair;
 use Thallo\Tenancy\Runtime\BootstrapTenantCreationGuard;
 use Thallo\Tenancy\StarterSeedException;
+use Thallo\Contracts\Tenancy\TenancyLifecycleAudit;
+use Thallo\Tenancy\Purge\PurgeCoordinator;
 
 final class TenantManagementController
 {
@@ -23,6 +25,8 @@ final class TenantManagementController
         private readonly ?TenantAdministration $tenants = null,
         private readonly ?TenantSeedActivator $seeder = null,
         private readonly ?TenantSeedRepair $seedRepair = null,
+        private readonly ?PurgeCoordinator $purges = null,
+        private readonly ?TenancyLifecycleAudit $audit = null,
     ) {
     }
 
@@ -98,6 +102,63 @@ final class TenantManagementController
         });
     }
 
+    public function destroy(Request $request, string $uuid): Response
+    {
+        if ($this->tenants === null) {
+            return $this->unavailable();
+        }
+        if (($this->body($request)['confirm'] ?? null) !== true) {
+            return Response::validation(['confirm' => 'Workspace deletion must be explicitly confirmed.']);
+        }
+        if ($this->isSelected($request, $uuid)) {
+            return Response::error('Switch away from this workspace before deleting it.', Response::HTTP_CONFLICT);
+        }
+        try {
+            $this->tenants->deleteTenant($this->context, $uuid);
+            $this->audit?->record('tenant.deleted', $this->actor($request), $uuid);
+            return Response::success(['tenant' => $this->tenants->getTenantLifecycle($this->context, $uuid)]);
+        } catch (\DomainException | \RuntimeException $exception) {
+            return Response::error($exception->getMessage(), Response::HTTP_CONFLICT);
+        }
+    }
+
+    public function restore(Request $request, string $uuid): Response
+    {
+        if ($this->tenants === null) {
+            return $this->unavailable();
+        }
+        try {
+            $this->tenants->restoreTenant($this->context, $uuid);
+            $this->audit?->record('tenant.restored', $this->actor($request), $uuid);
+            return Response::success(['tenant' => $this->tenants->getTenantLifecycle($this->context, $uuid)]);
+        } catch (\DomainException | \RuntimeException $exception) {
+            return Response::error($exception->getMessage(), Response::HTTP_CONFLICT);
+        }
+    }
+
+    public function purge(Request $request, string $uuid): Response
+    {
+        if ($this->tenants === null || $this->purges === null) {
+            return $this->unavailable();
+        }
+        if ($this->isSelected($request, $uuid)) {
+            return Response::error('Switch away from this workspace before purging it.', Response::HTTP_CONFLICT);
+        }
+        $lifecycle = $this->tenants->getTenantLifecycle($this->context, $uuid);
+        $confirm = $this->body($request)['confirm'] ?? null;
+        if ($lifecycle === null || !is_string($confirm) || !hash_equals((string) $lifecycle['slug'], $confirm)) {
+            return Response::validation(['confirm' => 'Type the workspace slug to confirm permanent purge.']);
+        }
+        try {
+            $runUuid = $this->purges->request($uuid, $this->actor($request));
+            $response = Response::success(['run_uuid' => $runUuid, 'status' => 'requested']);
+            $response->setStatusCode(Response::HTTP_ACCEPTED);
+            return $response;
+        } catch (\DomainException | \RuntimeException $exception) {
+            return Response::error($exception->getMessage(), Response::HTTP_CONFLICT);
+        }
+    }
+
     public function seed(string $uuid): Response
     {
         if ($this->seedRepair === null) {
@@ -148,6 +209,12 @@ final class TenantManagementController
         $user = $request->attributes->get('user');
 
         return is_array($user) && is_string($user['uuid'] ?? null) ? $user['uuid'] : null;
+    }
+
+    private function isSelected(Request $request, string $tenantUuid): bool
+    {
+        $selected = trim((string) $request->headers->get('X-Tenant-Id', ''));
+        return $selected !== '' && hash_equals($tenantUuid, $selected);
     }
 
     private function unavailable(): Response
