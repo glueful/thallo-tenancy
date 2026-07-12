@@ -34,7 +34,7 @@ final class CachePurgeHandler implements PurgeHandler
         $this->cache->purgeForTenant($tenantUuid);
     }
 
-    public function verify(ApplicationContext $context, string $tenantUuid): bool
+    public function verify(ApplicationContext $context, string $tenantUuid, array $artifacts): bool
     {
         return true;
     }

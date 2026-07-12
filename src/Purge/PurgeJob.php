@@ -80,7 +80,7 @@ final class PurgeJob extends Job
                 $handler->purge($context, $tenantUuid, $artifacts[$handlerId] ?? []);
                 $runs->checkpoint($context, $runUuid, $workerUuid, $handlerId, 'purged');
                 $phase = 'verify';
-                if (!$handler->verify($context, $tenantUuid)) {
+                if (!$handler->verify($context, $tenantUuid, $artifacts[$handlerId] ?? [])) {
                     throw new \RuntimeException("Purge handler '{$handlerId}' did not verify cleanly.");
                 }
                 $runs->checkpoint($context, $runUuid, $workerUuid, $handlerId, 'verified');

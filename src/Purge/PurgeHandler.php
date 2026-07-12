@@ -19,5 +19,6 @@ interface PurgeHandler
     /** @param array<string, mixed> $artifacts */
     public function purge(ApplicationContext $context, string $tenantUuid, array $artifacts): void;
 
-    public function verify(ApplicationContext $context, string $tenantUuid): bool;
+    /** @param array<string, mixed> $artifacts */
+    public function verify(ApplicationContext $context, string $tenantUuid, array $artifacts): bool;
 }

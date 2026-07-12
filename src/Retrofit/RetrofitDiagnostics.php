@@ -37,6 +37,12 @@ final class RetrofitDiagnostics
         'settings' => ['tenant_uuid', 'key'],
     ];
 
+    /** Tables whose fresh-install migrations are tenant-shaped before global retrofit begins. */
+    private const BORN_WIDENED = [
+        'collection_definitions',
+        'collection_schema_changes',
+    ];
+
     public function __construct(
         private readonly Connection $connection,
         private readonly SchemaIntrospector $introspector,
@@ -78,6 +84,9 @@ final class RetrofitDiagnostics
         if ($state === 'none') {
             $widened = [];
             foreach (ThalloTenantTables::all() as $table => $meta) {
+                if (in_array($table, self::BORN_WIDENED, true)) {
+                    continue;
+                }
                 if ($this->tableExists($table) && $this->tableCoherence($table, $meta)['ok']) {
                     $widened[] = $table;
                 }
@@ -136,6 +145,15 @@ final class RetrofitDiagnostics
             if (!$this->introspector->uniqueExists($table, $columns)) {
                 return ['ok' => false, 'detail' => 'missing widened unique: (' . implode(', ', $columns) . ')'];
             }
+        }
+        if (
+            $table === 'collection_schema_changes'
+            && !$this->introspector->indexExists($table, 'idx_collection_changes_tenant_collection')
+        ) {
+            return [
+                'ok' => false,
+                'detail' => 'missing tenant collection index: (tenant_uuid, collection_uuid)',
+            ];
         }
 
         return ['ok' => true, 'detail' => 'coherent'];

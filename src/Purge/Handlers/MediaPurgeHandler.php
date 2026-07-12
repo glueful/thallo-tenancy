@@ -78,7 +78,7 @@ final class MediaPurgeHandler implements PurgeHandler
         }
     }
 
-    public function verify(ApplicationContext $context, string $tenantUuid): bool
+    public function verify(ApplicationContext $context, string $tenantUuid, array $artifacts): bool
     {
         foreach (['media_usage', 'media_meta', 'media_assets'] as $table) {
             if (!$this->exists($table)) {

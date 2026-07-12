@@ -12,7 +12,13 @@ use Thallo\Tenancy\ThalloTenantTables;
 
 final class TablesPurgeHandler implements PurgeHandler
 {
-    private const SPECIALIZED = ['media_assets', 'media_meta', 'media_usage'];
+    private const SPECIALIZED = [
+        'media_assets',
+        'media_meta',
+        'media_usage',
+        'collection_definitions',
+        'collection_schema_changes',
+    ];
 
     public function __construct(private readonly Connection $connection)
     {
@@ -57,7 +63,7 @@ final class TablesPurgeHandler implements PurgeHandler
         }
     }
 
-    public function verify(ApplicationContext $context, string $tenantUuid): bool
+    public function verify(ApplicationContext $context, string $tenantUuid, array $artifacts): bool
     {
         foreach ($this->targetTables() as $table) {
             if (!$this->exists($table)) {

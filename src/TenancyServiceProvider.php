@@ -15,6 +15,7 @@ use Glueful\Extensions\Contracts\Tenancy\FullTenantResolutionReadiness;
 use Glueful\Extensions\Contracts\Tenancy\TenantDomainAdministration;
 use Glueful\Extensions\Contracts\Tenancy\TenantResolutionProbe;
 use Glueful\Extensions\Contracts\Tenancy\TenantAdministration;
+use Glueful\Extensions\Tenancy\Bridge\ContractTenantProvisioner;
 use Glueful\Uploader\Contracts\BlobAccessPolicy;
 use Glueful\Uploader\Contracts\BlobCreatedHook;
 use Glueful\Database\Connection;
@@ -45,10 +46,12 @@ use Thallo\Tenancy\Retrofit\SchemaRetrofit;
 use Thallo\Tenancy\Retrofit\TableRebuilder;
 use Thallo\Tenancy\Retrofit\UniquenessPreflight;
 use Thallo\Tenancy\System\SystemFlags;
+use Thallo\Tenancy\Tenant\SingleStoreTenant;
 use Thallo\Tenancy\Runtime\TenancyRuntimeReadiness as CompositeTenantRuntimeReadiness;
 use Thallo\Tenancy\Runtime\BootstrapDefaultTenantMiddleware;
 use Thallo\Tenancy\Runtime\BootstrapTenantCreationGuard;
-use Thallo\Tenancy\Runtime\CollectionsDisabledWhenTenantMiddleware;
+use Thallo\Tenancy\ApiKeyBinding\TenantApiKeyBindingRepository;
+use Thallo\Tenancy\Http\Middleware\CollectionsTenantBindingMiddleware;
 use Thallo\Tenancy\Runtime\TenantSystemMiddleware;
 use Thallo\Tenancy\Runtime\TenantProfileMiddleware;
 use Thallo\Tenancy\Cache\CacheTransition;
@@ -67,13 +70,13 @@ use Thallo\Tenancy\Http\Controllers\TenancyEnablementController;
 use Thallo\Tenancy\Http\Controllers\TenancyResolutionController;
 use Thallo\Tenancy\Http\Controllers\TenantDirectoryController;
 use Thallo\Tenancy\Http\Controllers\TenantManagementController;
+use Thallo\Tenancy\Http\Controllers\TenantManagementServices;
 use Thallo\Tenancy\Http\Controllers\TenantDomainController;
 use Thallo\Tenancy\Http\Controllers\TenantMembershipController;
 use Thallo\Tenancy\Resolution\ThalloFullResolutionReadiness;
 use Thallo\Tenancy\Resolution\ResolutionActivationStore;
 use Thallo\Tenancy\Resolution\FullResolutionActivation;
 use Thallo\Tenancy\Purge\Handlers\CachePurgeHandler;
-use Thallo\Tenancy\Purge\Handlers\CollectionsPurgeHandler;
 use Thallo\Tenancy\Purge\Handlers\MediaPurgeHandler;
 use Thallo\Tenancy\Purge\Handlers\TablesPurgeHandler;
 use Thallo\Tenancy\Purge\PurgeResourceRegistry;
@@ -91,6 +94,16 @@ final class TenancyServiceProvider extends ServiceProvider
         return [
             SystemFlags::class => [
                 'class' => SystemFlags::class,
+                'shared' => true,
+                'autowire' => true,
+            ],
+            SingleStoreTenant::class => [
+                'class' => SingleStoreTenant::class,
+                'shared' => true,
+                'autowire' => true,
+            ],
+            ContractTenantProvisioner::class => [
+                'class' => ContractTenantProvisioner::class,
                 'shared' => true,
                 'autowire' => true,
             ],
@@ -194,9 +207,8 @@ final class TenancyServiceProvider extends ServiceProvider
                 'autowire' => true,
             ],
             TenantManagementController::class => [
-                'class' => TenantManagementController::class,
+                'factory' => [self::class, 'makeTenantManagementController'],
                 'shared' => true,
-                'autowire' => true,
             ],
             TenantDomainController::class => [
                 'class' => TenantDomainController::class,
@@ -222,11 +234,16 @@ final class TenancyServiceProvider extends ServiceProvider
                 'shared' => true,
                 'autowire' => true,
             ],
-            CollectionsDisabledWhenTenantMiddleware::class => [
-                'class' => CollectionsDisabledWhenTenantMiddleware::class,
+            TenantApiKeyBindingRepository::class => [
+                'class' => TenantApiKeyBindingRepository::class,
                 'shared' => true,
                 'autowire' => true,
-                'alias' => ['collections_disabled_when_tenant'],
+            ],
+            CollectionsTenantBindingMiddleware::class => [
+                'class' => CollectionsTenantBindingMiddleware::class,
+                'shared' => true,
+                'autowire' => true,
+                'alias' => ['collections_tenant_binding'],
             ],
             TenantSystemMiddleware::class => [
                 'class' => TenantSystemMiddleware::class,
@@ -367,11 +384,6 @@ final class TenancyServiceProvider extends ServiceProvider
                 'shared' => true,
                 'autowire' => true,
             ],
-            CollectionsPurgeHandler::class => [
-                'class' => CollectionsPurgeHandler::class,
-                'shared' => true,
-                'autowire' => true,
-            ],
             PurgeResourceRegistry::class => [
                 'factory' => [self::class, 'makePurgeResourceRegistry'],
                 'shared' => true,
@@ -405,8 +417,23 @@ final class TenancyServiceProvider extends ServiceProvider
         $registry->register($container->get(MediaPurgeHandler::class));
         $registry->register($container->get(TablesPurgeHandler::class));
         $registry->register($container->get(CachePurgeHandler::class));
-        $registry->register($container->get(CollectionsPurgeHandler::class));
+        if ($container->has('thallo.collections.purge_handler')) {
+            $handler = $container->get('thallo.collections.purge_handler');
+            if ($handler instanceof \Thallo\Tenancy\Purge\PurgeHandler) {
+                $registry->register($handler);
+            }
+        }
         return $registry;
+    }
+
+    public static function makeTenantManagementController(
+        ContainerInterface $container
+    ): TenantManagementController {
+        return new TenantManagementController(
+            $container->get(ApplicationContext::class),
+            $container->get(BootstrapTenantCreationGuard::class),
+            services: new TenantManagementServices($container),
+        );
     }
 
     public static function makeRetrofitDdl(ContainerInterface $container): RetrofitDdl
@@ -555,6 +582,19 @@ final class TenancyServiceProvider extends ServiceProvider
             label: 'Multi-tenancy',
             description: 'Tenant-owned content model + data, scoping, seed/sync and enablement.',
         ));
+
+        // The engine's IDENTITY migrations (tenants/tenant_memberships/tenant_domains/released_hosts)
+        // must exist on EVERY install — clean-off included — because this pack exposes provisioning
+        // (SingleStoreTenant -> ContractTenantProvisioner) and owns tables that reference `tenants`.
+        // We load them here from the always-on pack rather than registering the engine provider,
+        // whose enforcement hooks gate on config('tenancy.enabled') (default true) and would arm
+        // request-time scoping clean-off. Same priority (DEFAULT - 50) the engine provider uses, so
+        // `tenants` lands before any DEPENDENT app/pack table that references it. Idempotent by
+        // migration name, so enabling tenancy later never double-runs them.
+        $engineMigrations = dirname(
+            (new \ReflectionClass(\Glueful\Extensions\Tenancy\TenancyServiceProvider::class))->getFileName()
+        ) . '/../migrations';
+        $this->loadMigrationsFrom($engineMigrations, MigrationPriority::DEFAULT - 50, 'glueful/tenancy');
 
         // Migrations load unconditionally (outside any gate) so the system-channel table exists
         // for every install — the retrofit that adds tenant_uuid is NOT here (it is an

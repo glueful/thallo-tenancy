@@ -103,6 +103,14 @@ final class ThalloTenantTables
             ),
             'workflow_transitions' => self::row($inst),
 
+            // Collection metadata is row-scoped; dynamic tc_* data tables are structurally
+            // isolated per tenant and are never registered here.
+            'collection_definitions' => self::row(
+                $def,
+                [['uniq_collection_def_tenant_name', ['tenant_uuid', 'name']]],
+            ),
+            'collection_schema_changes' => self::row($inst),
+
             // --- added by this pack ---
             'starter_provenance' => self::row($inst),
         ];

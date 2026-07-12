@@ -27,17 +27,19 @@ final class TenantManagementController
         private readonly ?TenantSeedRepair $seedRepair = null,
         private readonly ?PurgeCoordinator $purges = null,
         private readonly ?TenancyLifecycleAudit $audit = null,
+        private readonly ?TenantManagementServices $services = null,
     ) {
     }
 
     public function index(Request $request): Response
     {
-        if ($this->tenants === null) {
-            return $this->unavailable();
+        $tenants = $this->tenantAdministration();
+        if ($tenants === null) {
+            return Response::success(['tenants' => []]);
         }
         $status = $request->query->get('status');
 
-        return Response::success(['tenants' => $this->tenants->listTenants(
+        return Response::success(['tenants' => $tenants->listTenants(
             $this->context,
             is_string($status) && $status !== '' ? $status : null
         )]);
@@ -45,7 +47,9 @@ final class TenantManagementController
 
     public function create(Request $request): Response
     {
-        if ($this->tenants === null || $this->seeder === null) {
+        $tenants = $this->tenantAdministration();
+        $seeder = $this->seedActivator();
+        if ($tenants === null || $seeder === null) {
             return $this->unavailable();
         }
         $body = $this->body($request);
@@ -58,9 +62,9 @@ final class TenantManagementController
 
         try {
             $this->creationGuard->assertCanCreateTenant();
-            $uuid = $this->tenants->create($this->context, $slug, $name, $owner);
+            $uuid = $tenants->create($this->context, $slug, $name, $owner);
             try {
-                $this->seeder->seedAndActivate($uuid, $owner);
+                $seeder->seedAndActivate($uuid, $owner);
             } catch (\Throwable $e) {
                 return Response::error(
                     'Tenant was created but starter seeding failed.',
@@ -84,27 +88,30 @@ final class TenantManagementController
 
     public function suspend(string $uuid): Response
     {
-        if ($this->tenants === null) {
+        $tenants = $this->tenantAdministration();
+        if ($tenants === null) {
             return $this->unavailable();
         }
-        return $this->transition(function () use ($uuid): void {
-            $this->tenants->suspend($this->context, $uuid);
+        return $this->transition(function () use ($tenants, $uuid): void {
+            $tenants->suspend($this->context, $uuid);
         });
     }
 
     public function reactivate(string $uuid): Response
     {
-        if ($this->tenants === null) {
+        $tenants = $this->tenantAdministration();
+        if ($tenants === null) {
             return $this->unavailable();
         }
-        return $this->transition(function () use ($uuid): void {
-            $this->tenants->reactivate($this->context, $uuid);
+        return $this->transition(function () use ($tenants, $uuid): void {
+            $tenants->reactivate($this->context, $uuid);
         });
     }
 
     public function destroy(Request $request, string $uuid): Response
     {
-        if ($this->tenants === null) {
+        $tenants = $this->tenantAdministration();
+        if ($tenants === null) {
             return $this->unavailable();
         }
         if (($this->body($request)['confirm'] ?? null) !== true) {
@@ -114,9 +121,9 @@ final class TenantManagementController
             return Response::error('Switch away from this workspace before deleting it.', Response::HTTP_CONFLICT);
         }
         try {
-            $this->tenants->deleteTenant($this->context, $uuid);
-            $this->audit?->record('tenant.deleted', $this->actor($request), $uuid);
-            return Response::success(['tenant' => $this->tenants->getTenantLifecycle($this->context, $uuid)]);
+            $tenants->deleteTenant($this->context, $uuid);
+            $this->lifecycleAudit()?->record('tenant.deleted', $this->actor($request), $uuid);
+            return Response::success(['tenant' => $tenants->getTenantLifecycle($this->context, $uuid)]);
         } catch (\DomainException | \RuntimeException $exception) {
             return Response::error($exception->getMessage(), Response::HTTP_CONFLICT);
         }
@@ -124,13 +131,14 @@ final class TenantManagementController
 
     public function restore(Request $request, string $uuid): Response
     {
-        if ($this->tenants === null) {
+        $tenants = $this->tenantAdministration();
+        if ($tenants === null) {
             return $this->unavailable();
         }
         try {
-            $this->tenants->restoreTenant($this->context, $uuid);
-            $this->audit?->record('tenant.restored', $this->actor($request), $uuid);
-            return Response::success(['tenant' => $this->tenants->getTenantLifecycle($this->context, $uuid)]);
+            $tenants->restoreTenant($this->context, $uuid);
+            $this->lifecycleAudit()?->record('tenant.restored', $this->actor($request), $uuid);
+            return Response::success(['tenant' => $tenants->getTenantLifecycle($this->context, $uuid)]);
         } catch (\DomainException | \RuntimeException $exception) {
             return Response::error($exception->getMessage(), Response::HTTP_CONFLICT);
         }
@@ -138,19 +146,21 @@ final class TenantManagementController
 
     public function purge(Request $request, string $uuid): Response
     {
-        if ($this->tenants === null || $this->purges === null) {
+        $tenants = $this->tenantAdministration();
+        $purges = $this->purgeCoordinator();
+        if ($tenants === null || $purges === null) {
             return $this->unavailable();
         }
         if ($this->isSelected($request, $uuid)) {
             return Response::error('Switch away from this workspace before purging it.', Response::HTTP_CONFLICT);
         }
-        $lifecycle = $this->tenants->getTenantLifecycle($this->context, $uuid);
+        $lifecycle = $tenants->getTenantLifecycle($this->context, $uuid);
         $confirm = $this->body($request)['confirm'] ?? null;
         if ($lifecycle === null || !is_string($confirm) || !hash_equals((string) $lifecycle['slug'], $confirm)) {
             return Response::validation(['confirm' => 'Type the workspace slug to confirm permanent purge.']);
         }
         try {
-            $runUuid = $this->purges->request($uuid, $this->actor($request));
+            $runUuid = $purges->request($uuid, $this->actor($request));
             $response = Response::success(['run_uuid' => $runUuid, 'status' => 'requested']);
             $response->setStatusCode(Response::HTTP_ACCEPTED);
             return $response;
@@ -161,12 +171,13 @@ final class TenantManagementController
 
     public function seed(string $uuid): Response
     {
-        if ($this->seedRepair === null) {
+        $seedRepair = $this->seedRepairService();
+        if ($seedRepair === null) {
             return $this->unavailable();
         }
 
         try {
-            $this->seedRepair->repair($uuid);
+            $seedRepair->repair($uuid);
             return Response::success(['tenant' => ['uuid' => $uuid, 'status' => 'active']]);
         } catch (StarterSeedException $exception) {
             return Response::error(
@@ -223,5 +234,30 @@ final class TenantManagementController
             'Tenant administration is unavailable.',
             Response::HTTP_SERVICE_UNAVAILABLE
         );
+    }
+
+    private function tenantAdministration(): ?TenantAdministration
+    {
+        return $this->tenants ?? $this->services?->tenants();
+    }
+
+    private function seedActivator(): ?TenantSeedActivator
+    {
+        return $this->seeder ?? $this->services?->seedActivator();
+    }
+
+    private function seedRepairService(): ?TenantSeedRepair
+    {
+        return $this->seedRepair ?? $this->services?->seedRepair();
+    }
+
+    private function purgeCoordinator(): ?PurgeCoordinator
+    {
+        return $this->purges ?? $this->services?->purges();
+    }
+
+    private function lifecycleAudit(): ?TenancyLifecycleAudit
+    {
+        return $this->audit ?? $this->services?->audit();
     }
 }
