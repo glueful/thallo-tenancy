@@ -12,6 +12,7 @@ use Thallo\Tenancy\Resolution\ResolutionActivationStore;
 use Thallo\Tenancy\Retrofit\RetrofitDiagnostics;
 use Thallo\Tenancy\System\SystemFlags;
 use Thallo\Contracts\Tenancy\RolePolicyDiagnostics;
+use Thallo\Contracts\Tenancy\SignupDiagnostics;
 
 /** Read-only operational diagnosis for the tenancy schema, state tuple, provenance, and write audit. */
 final class TenancyDiagnostics
@@ -25,6 +26,7 @@ final class TenancyDiagnostics
         private readonly StaticWriteAudit $writeAudit,
         private readonly ?StarterCoverageCheck $coverage = null,
         private readonly ?RolePolicyDiagnostics $rolePolicy = null,
+        private readonly ?SignupDiagnostics $signup = null,
     ) {
     }
 
@@ -52,6 +54,7 @@ final class TenancyDiagnostics
             'domain_reverification' => $this->domainReverificationSection(),
             'static_write_audit' => $this->auditSection(),
             'role_policy' => $this->rolePolicySection(),
+            'public_signup' => $this->signupSection(),
         ];
 
         $ok = true;
@@ -186,5 +189,12 @@ final class TenancyDiagnostics
         }
         $rows = $this->rolePolicy->driftRows();
         return ['status' => $rows === [] ? 'ok' : 'warn', 'detail' => $rows];
+    }
+
+    /** @return array{status:string,detail:mixed} */
+    private function signupSection(): array
+    {
+        return $this->signup?->check()
+            ?? ['status' => 'info', 'detail' => 'Public signup diagnostics unavailable.'];
     }
 }
