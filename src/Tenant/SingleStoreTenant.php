@@ -7,7 +7,7 @@ namespace Thallo\Tenancy\Tenant;
 use Glueful\Bootstrap\ApplicationContext;
 use Glueful\Database\Connection;
 use Glueful\Extensions\Contracts\Tenancy\CurrentTenantResolver;
-use Glueful\Extensions\Tenancy\Bridge\ContractTenantProvisioner;
+use Glueful\Extensions\Contracts\Tenancy\TenantProvisioner;
 use Glueful\Helpers\Utils;
 use Thallo\Tenancy\Retrofit\PreexistingTenantException;
 use Thallo\Tenancy\System\SystemFlags;
@@ -23,7 +23,7 @@ final class SingleStoreTenant
         private readonly ApplicationContext $context,
         private readonly Connection $connection,
         private readonly SystemFlags $flags,
-        private readonly ContractTenantProvisioner $provisioner,
+        private readonly TenantProvisioner $provisioner,
         private readonly ?CurrentTenantResolver $current = null,
     ) {
     }

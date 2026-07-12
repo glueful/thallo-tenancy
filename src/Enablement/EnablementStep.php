@@ -5,12 +5,11 @@ declare(strict_types=1);
 namespace Thallo\Tenancy\Enablement;
 
 /**
- * Resumable enablement machine (spec §9). Reaching `on` crosses TWO fresh-boot boundaries — one so the
- * newly-installed provider's autoloader/bindings appear, one so `tenancy.enabled` arms table registration:
- *   off → installing → [awaiting_install] → enabling_extension → awaiting_provider_boot
- *       → migrating_extension → awaiting_confirm → retrofitting → reloading → (fresh boot) finalizing → on
- * `awaiting_provider_boot` = the provider was written into config/extensions.php + activated, but is NOT
- * bound in THIS already-booted container; the next fresh request has it and may verify contracts + migrate.
+ * Resumable enablement machine. The package/control plane is always present; legacy install/provider steps
+ * remain readable only for recovery. New flows are:
+ *   off → migrating_extension → awaiting_confirm → retrofitting → enabling_enforcement
+ *       → reloading → (fresh boot) finalizing → on
+ * `enabling_enforcement` = retrofit succeeded, barrier raised, provider being allow-listed; enabled is 0.
  * `reloading` = retrofit done, tenancy.enabled=1, BARRIER STILL UP. `finalizing` = a fresh-process
  * finalize() CLAIMED the transition (barrier still up) and is verifying enforcement; a crash here is
  * recoverable. Only the final atomic step (lower barrier + set `on` in ONE system-channel transaction)
@@ -27,6 +26,7 @@ enum EnablementStep: string
     case MIGRATING_EXTENSION = 'migrating_extension';
     case AWAITING_CONFIRM = 'awaiting_confirm';
     case RETROFITTING = 'retrofitting';
+    case ENABLING_ENFORCEMENT = 'enabling_enforcement';
     case RELOADING = 'reloading';
     case FINALIZING = 'finalizing';
     case ON = 'on';
@@ -50,6 +50,7 @@ enum EnablementStep: string
             self::MIGRATING_EXTENSION => 40,
             self::AWAITING_CONFIRM => 50,
             self::RETROFITTING => 75,
+            self::ENABLING_ENFORCEMENT => 85,
             self::RELOADING => 90,
             self::FINALIZING => 95,
             self::ON => 100,

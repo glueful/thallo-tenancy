@@ -70,16 +70,15 @@ final class ExtensionActivation implements ExtensionActivationContract
 
     public function activate(): void
     {
-        if ($this->isActivated()) {
-            return;
-        }
-
         $candidates = $this->candidates();
         if (!isset($candidates[self::PACKAGE])) {
             throw new \RuntimeException('glueful/tenancy is not installed.');
         }
 
-        $enabled = [...EnabledProviders::from($this->context), self::PROVIDER];
+        $current = EnabledProviders::from($this->context);
+        $enabled = in_array(self::PROVIDER, $current, true)
+            ? $current
+            : [...$current, self::PROVIDER];
         $resolution = (new ExtensionResolver())->resolve($candidates, $enabled, Version::VERSION);
         if ($resolution->hasErrors()) {
             throw new \RuntimeException(implode('; ', array_map(
@@ -88,7 +87,27 @@ final class ExtensionActivation implements ExtensionActivationContract
             )));
         }
 
-        (new ExtensionStateWriter())->enable(config_path($this->context, 'extensions.php'), self::PROVIDER);
+        if (!in_array(self::PROVIDER, $current, true)) {
+            (new ExtensionStateWriter())->enable(config_path($this->context, 'extensions.php'), self::PROVIDER);
+        }
+        app($this->context, ExtensionManager::class)->writeCacheNow($resolution->providers);
+    }
+
+    public function deactivate(): void
+    {
+        $current = EnabledProviders::from($this->context);
+        $enabled = array_values(array_diff($current, [self::PROVIDER]));
+        $resolution = (new ExtensionResolver())->resolve($this->candidates(), $enabled, Version::VERSION);
+        if ($resolution->hasErrors()) {
+            throw new \RuntimeException(implode('; ', array_map(
+                static fn ($error): string => $error->message,
+                $resolution->errors,
+            )));
+        }
+
+        if (in_array(self::PROVIDER, $current, true)) {
+            (new ExtensionStateWriter())->disable(config_path($this->context, 'extensions.php'), self::PROVIDER);
+        }
         app($this->context, ExtensionManager::class)->writeCacheNow($resolution->providers);
     }
 

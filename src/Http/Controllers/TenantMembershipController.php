@@ -9,6 +9,7 @@ use Glueful\Extensions\Contracts\Tenancy\TenantAdministration;
 use Glueful\Extensions\Contracts\Tenancy\CurrentTenantResolver;
 use Glueful\Http\Response;
 use Symfony\Component\HttpFoundation\Request;
+use Glueful\Extensions\Tenancy\Membership\MembershipRoleConflictException;
 
 final class TenantMembershipController
 {
@@ -87,6 +88,10 @@ final class TenantMembershipController
         try {
             $operation();
             return Response::success();
+        } catch (MembershipRoleConflictException $exception) {
+            return Response::error($exception->getMessage(), Response::HTTP_CONFLICT, [
+                'code' => 'MEMBERSHIP_ROLE_CONFLICT',
+            ]);
         } catch (\InvalidArgumentException | \RuntimeException | \DomainException $e) {
             return Response::validation(['membership' => $e->getMessage()]);
         }

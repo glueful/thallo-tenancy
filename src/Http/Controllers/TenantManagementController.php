@@ -188,7 +188,7 @@ final class TenantManagementController
                     'failed_definition' => $exception->definitionLabel,
                 ],
             );
-        } catch (\DomainException | \RuntimeException $exception) {
+        } catch (\InvalidArgumentException | \DomainException | \RuntimeException $exception) {
             return Response::validation(['repair' => [$exception->getMessage()]]);
         }
     }

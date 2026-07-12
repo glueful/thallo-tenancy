@@ -58,6 +58,17 @@ final class SystemFlags implements SystemChannel
         return $this->get(self::KEY_ENABLED) === '1';
     }
 
+    /** Normal tenant-aware work is permitted from a fresh ON-and-barrier-down snapshot. */
+    public function enforcementActive(): bool
+    {
+        // Enable/disable may be performed by another HTTP, CLI, or worker process.
+        $this->clearCache();
+
+        return $this->tenancyEnabled()
+            && $this->get('tenancy.enable_step') === 'on'
+            && $this->get('tenancy.retrofit_active') !== '1';
+    }
+
     /** @return 'none'|'widened' */
     public function schemaState(): string
     {

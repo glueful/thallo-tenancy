@@ -15,11 +15,9 @@ use Glueful\Extensions\Contracts\Tenancy\FullTenantResolutionReadiness;
 use Glueful\Extensions\Contracts\Tenancy\TenantDomainAdministration;
 use Glueful\Extensions\Contracts\Tenancy\TenantResolutionProbe;
 use Glueful\Extensions\Contracts\Tenancy\TenantAdministration;
-use Glueful\Extensions\Tenancy\Bridge\ContractTenantProvisioner;
 use Glueful\Uploader\Contracts\BlobAccessPolicy;
 use Glueful\Uploader\Contracts\BlobCreatedHook;
 use Glueful\Database\Connection;
-use Glueful\Cache\CacheStore;
 use Glueful\Extensions\Contracts\Tenancy\CurrentTenantResolver;
 use Glueful\Extensions\ServiceProvider;
 use PDO;
@@ -99,11 +97,6 @@ final class TenancyServiceProvider extends ServiceProvider
             ],
             SingleStoreTenant::class => [
                 'class' => SingleStoreTenant::class,
-                'shared' => true,
-                'autowire' => true,
-            ],
-            ContractTenantProvisioner::class => [
-                'class' => ContractTenantProvisioner::class,
                 'shared' => true,
                 'autowire' => true,
             ],
@@ -582,19 +575,6 @@ final class TenancyServiceProvider extends ServiceProvider
             label: 'Multi-tenancy',
             description: 'Tenant-owned content model + data, scoping, seed/sync and enablement.',
         ));
-
-        // The engine's IDENTITY migrations (tenants/tenant_memberships/tenant_domains/released_hosts)
-        // must exist on EVERY install — clean-off included — because this pack exposes provisioning
-        // (SingleStoreTenant -> ContractTenantProvisioner) and owns tables that reference `tenants`.
-        // We load them here from the always-on pack rather than registering the engine provider,
-        // whose enforcement hooks gate on config('tenancy.enabled') (default true) and would arm
-        // request-time scoping clean-off. Same priority (DEFAULT - 50) the engine provider uses, so
-        // `tenants` lands before any DEPENDENT app/pack table that references it. Idempotent by
-        // migration name, so enabling tenancy later never double-runs them.
-        $engineMigrations = dirname(
-            (new \ReflectionClass(\Glueful\Extensions\Tenancy\TenancyServiceProvider::class))->getFileName()
-        ) . '/../migrations';
-        $this->loadMigrationsFrom($engineMigrations, MigrationPriority::DEFAULT - 50, 'glueful/tenancy');
 
         // Migrations load unconditionally (outside any gate) so the system-channel table exists
         // for every install — the retrofit that adds tenant_uuid is NOT here (it is an

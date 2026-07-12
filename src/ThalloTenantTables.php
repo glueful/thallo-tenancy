@@ -113,6 +113,15 @@ final class ThalloTenantTables
 
             // --- added by this pack ---
             'starter_provenance' => self::row($inst),
+            'tenant_role_overrides' => self::row(
+                $inst,
+                [['uniq_tenant_role_override', ['tenant_uuid', 'role_slug', 'capability']]],
+            ),
+            'tenant_role_policy' => self::row($inst),
+            'tenant_roles' => self::row(
+                $def,
+                [['uniq_tenant_role_slug', ['tenant_uuid', 'slug']]],
+            ),
         ];
     }
 

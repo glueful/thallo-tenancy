@@ -70,27 +70,24 @@ final class TenancyEnablement
                 $this->guard->begin();
                 try {
                     $this->cacheTransition->purge();
-                    $this->connection->transaction(function (): void {
-                        $this->flags->put('tenancy.enabled', '1');
-                        if (
-                            !$this->store->compareAndSet(
-                                EnablementStep::DISABLED_WIDENED,
-                                EnablementStep::RELOADING,
-                            )
-                        ) {
-                            throw new EnablementException('Re-enable transition lost a CAS race.');
-                        }
-                    });
-                } catch (\Throwable $exception) {
-                    $this->flags->clearCache();
-                    if (!$this->flags->tenancyEnabled()) {
-                        $this->guard->end();
-                        throw new EnablementException('Re-enable failed: ' . $exception->getMessage());
+                    if (
+                        !$this->store->compareAndSet(
+                            EnablementStep::DISABLED_WIDENED,
+                            EnablementStep::ENABLING_ENFORCEMENT,
+                        )
+                    ) {
+                        throw new EnablementException('Re-enable transition lost a CAS race.');
                     }
+                } catch (\Throwable $exception) {
                     $this->store->recordFailure(EnablementStep::DISABLED_WIDENED, $exception->getMessage());
+                    return $this->status();
                 }
 
-                return $this->status();
+                return $this->activateEnforcement();
+            }
+
+            if ($step === EnablementStep::ENABLING_ENFORCEMENT) {
+                return $this->activateEnforcement();
             }
 
             if (
@@ -104,51 +101,16 @@ final class TenancyEnablement
                 return $this->status();
             }
 
-            if ($step === EnablementStep::OFF || $step === EnablementStep::INSTALLING) {
-                $this->store->setStep(EnablementStep::INSTALLING);
-                $install = $this->activation->install();
-                if ($install['blocked']) {
-                    $this->store->setStep(EnablementStep::AWAITING_INSTALL);
-                    return $this->status();
-                }
-
-                $this->store->setStep(EnablementStep::ENABLING_EXTENSION);
-                return $this->status();
-            }
-
-            if ($step === EnablementStep::AWAITING_INSTALL) {
-                if (!$this->activation->isInstalled()) {
-                    return $this->status();
-                }
-
-                $this->store->setStep(EnablementStep::ENABLING_EXTENSION);
-                return $this->status();
-            }
-
-            if ($step === EnablementStep::ENABLING_EXTENSION) {
-                if (!$this->activation->isActivated()) {
-                    $this->activation->activate();
-                }
-
-                $this->store->setStep(EnablementStep::AWAITING_PROVIDER_BOOT);
-                return $this->status();
-            }
-
-            if ($step === EnablementStep::AWAITING_PROVIDER_BOOT) {
-                if (!$this->context->getContainer()->has(TenantProvisioner::class)) {
-                    return $this->status();
-                }
-
-                $migration = $this->activation->migrate();
-                if ($migration['failed'] !== []) {
-                    $this->store->recordFailure(
-                        EnablementStep::MIGRATING_EXTENSION,
-                        'Extension migration failed: ' . implode(', ', $migration['failed']),
-                    );
-                    return $this->status();
-                }
-
-                $this->store->setStep(EnablementStep::AWAITING_CONFIRM);
+            if (
+                in_array($step, [
+                EnablementStep::OFF,
+                EnablementStep::INSTALLING,
+                EnablementStep::AWAITING_INSTALL,
+                EnablementStep::ENABLING_EXTENSION,
+                EnablementStep::AWAITING_PROVIDER_BOOT,
+                ], true)
+            ) {
+                $this->store->setStep(EnablementStep::MIGRATING_EXTENSION);
                 return $this->status();
             }
 
@@ -196,10 +158,20 @@ final class TenancyEnablement
             }
 
             $this->cacheTransition->purge();
-            $this->flags->put('tenancy.enabled', '1');
-            $this->store->setStep(EnablementStep::RELOADING);
+            if (
+                !$this->store->compareAndSet(
+                    EnablementStep::RETROFITTING,
+                    EnablementStep::ENABLING_ENFORCEMENT,
+                )
+            ) {
+                $this->store->recordFailure(
+                    $this->store->step(),
+                    'Retrofit completion transition lost a CAS race.',
+                );
+                return $this->status();
+            }
 
-            return $this->status();
+            return $this->activateEnforcement();
         });
     }
 
@@ -327,17 +299,25 @@ final class TenancyEnablement
             $this->cache->set($sentinel, '1', 3600);
             $this->cacheTransition->purge();
 
-            $this->connection->transaction(function (): void {
-                $this->flags->put('tenancy.enabled', '0');
-                if (
-                    !$this->store->compareAndSet(
-                        EnablementStep::DISABLING,
-                        EnablementStep::DISABLED_WIDENED,
-                    )
-                ) {
-                    throw new EnablementException('Disable flip lost a CAS race.');
-                }
-            });
+            try {
+                $this->activation->deactivate();
+                $this->connection->transaction(function (): void {
+                    $this->flags->put('tenancy.enabled', '0');
+                    if (
+                        !$this->store->compareAndSet(
+                            EnablementStep::DISABLING,
+                            EnablementStep::DISABLED_WIDENED,
+                        )
+                    ) {
+                        throw new EnablementException('Disable flip lost a CAS race.');
+                    }
+                });
+            } catch (\Throwable $exception) {
+                // Static enforcement hooks survive provider removal in this process. Keep the
+                // barrier raised; a fresh boot verifies compatibility mode before lowering it.
+                $this->flags->clearCache();
+                $this->store->recordFailure(EnablementStep::DISABLING, $exception->getMessage());
+            }
 
             return $this->status();
         });
@@ -387,6 +367,29 @@ final class TenancyEnablement
         }
 
         return $container->get(SchemaRetrofit::class);
+    }
+
+    private function activateEnforcement(): EnablementStatus
+    {
+        try {
+            $this->activation->activate();
+            $this->connection->transaction(function (): void {
+                $this->flags->put('tenancy.enabled', '1');
+                if (
+                    !$this->store->compareAndSet(
+                        EnablementStep::ENABLING_ENFORCEMENT,
+                        EnablementStep::RELOADING,
+                    )
+                ) {
+                    throw new EnablementException('Enforcement activation transition lost a CAS race.');
+                }
+            });
+        } catch (\Throwable $exception) {
+            $this->flags->clearCache();
+            $this->store->recordFailure(EnablementStep::ENABLING_ENFORCEMENT, $exception->getMessage());
+        }
+
+        return $this->status();
     }
 
     private function guardPersistedActive(): bool

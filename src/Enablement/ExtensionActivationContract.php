@@ -15,6 +15,8 @@ interface ExtensionActivationContract
 
     public function activate(): void;
 
+    public function deactivate(): void;
+
     /** @return array{applied:list<string>,failed:list<string>} */
     public function migrate(): array;
 }
