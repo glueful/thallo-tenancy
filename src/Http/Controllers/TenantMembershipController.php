@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Thallo\Tenancy\Http\Controllers;
 
+use Glueful\Auth\Contracts\UserProviderInterface;
+use Glueful\Extensions\Users\Repositories\UserRepository;
 use Glueful\Bootstrap\ApplicationContext;
 use Glueful\Extensions\Contracts\Tenancy\TenantAdministration;
 use Glueful\Extensions\Contracts\Tenancy\CurrentTenantResolver;
@@ -28,7 +30,8 @@ final class TenantMembershipController
         if ($this->tenants === null) {
             return $this->unavailable();
         }
-        return Response::success(['members' => $this->tenants->listMembers($this->context, $uuid)]);
+        $members = $this->tenants->listMembers($this->context, $uuid);
+        return Response::success(['members' => $this->withUserIdentities($members)]);
     }
 
     public function add(Request $request, string $uuid): Response
@@ -40,11 +43,19 @@ final class TenantMembershipController
             return $this->unavailable();
         }
         $body = $this->body($request);
-        return $this->mutate(function () use ($body, $uuid): void {
+        $email = trim((string) ($body['email'] ?? ''));
+        if ($email === '') {
+            return Response::validation(['email' => 'An email address is required.']);
+        }
+        $userUuid = $this->users()?->findByLogin($email)?->uuid();
+        if ($userUuid === null || $userUuid === '') {
+            return Response::validation(['email' => 'No user found with that email address.']);
+        }
+        return $this->mutate(function () use ($userUuid, $body, $uuid): void {
             $this->tenants->addMember(
                 $this->context,
                 $uuid,
-                (string) ($body['user_uuid'] ?? ''),
+                $userUuid,
                 (string) ($body['role'] ?? '')
             );
         });
@@ -80,6 +91,52 @@ final class TenantMembershipController
                 (string) ($body['role'] ?? '')
             );
         });
+    }
+
+    /**
+     * Attach a friendly full name / email to each membership row so the UI can show a human label
+     * instead of the raw user UUID (which stays in the payload only as the mutation key). Best-effort:
+     * an unresolved user simply keeps null name/email.
+     *
+     * @param list<array<string,mixed>> $members
+     * @return list<array<string,mixed>>
+     */
+    private function withUserIdentities(array $members): array
+    {
+        $provider = $this->users();
+        $profiles = $this->profiles();
+        foreach ($members as $i => $member) {
+            $userUuid = (string) ($member['user_uuid'] ?? '');
+            $identity = $userUuid !== '' ? $provider?->findByUuid($userUuid) : null;
+            $profile = $userUuid !== '' ? $profiles?->getProfile($userUuid) : null;
+            $name = trim(sprintf(
+                '%s %s',
+                (string) ($profile['first_name'] ?? ''),
+                (string) ($profile['last_name'] ?? '')
+            ));
+            $members[$i]['name'] = $name !== '' ? $name : null;
+            $members[$i]['email'] = $identity?->email();
+            $members[$i]['username'] = $identity?->username();
+        }
+        return $members;
+    }
+
+    private function users(): ?UserProviderInterface
+    {
+        try {
+            return app($this->context, UserProviderInterface::class);
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    private function profiles(): ?UserRepository
+    {
+        try {
+            return app($this->context, UserRepository::class);
+        } catch (\Throwable) {
+            return null;
+        }
     }
 
     /** @param callable():void $operation */
