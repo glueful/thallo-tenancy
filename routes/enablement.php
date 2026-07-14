@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use Glueful\Routing\Router;
+use Thallo\Tenancy\Http\Controllers\PublicOriginController;
 use Thallo\Tenancy\Http\Controllers\TenancyEnablementController;
 use Thallo\Tenancy\Http\Controllers\TenancyResolutionController;
 use Thallo\Tenancy\Http\Controllers\TenantDirectoryController;
@@ -33,6 +34,16 @@ $router->group(['prefix' => '/v1/admin', 'middleware' => ['auth']], function (Ro
         ->middleware('tenant_system')
         ->middleware('content_permission:tenancy.manage');
     $router->post('/tenancy/resolution/deactivate', [TenancyResolutionController::class, 'deactivate'])
+        ->middleware('tenant_system')
+        ->middleware('content_permission:tenancy.manage');
+    $router->post('/tenancy/resolution/reset', [TenancyResolutionController::class, 'reset'])
+        ->middleware('tenant_system')
+        ->middleware('content_permission:tenancy.manage');
+
+    $router->get('/tenancy/public-origin', [PublicOriginController::class, 'show'])
+        ->middleware('tenant_system')
+        ->middleware('content_permission:tenancy.manage');
+    $router->put('/tenancy/public-origin', [PublicOriginController::class, 'update'])
         ->middleware('tenant_system')
         ->middleware('content_permission:tenancy.manage');
 });

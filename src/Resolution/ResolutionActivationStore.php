@@ -106,6 +106,24 @@ final class ResolutionActivationStore
         return true;
     }
 
+    /** Atomically returns a FAILED machine to INACTIVE, clearing failure state. */
+    public function resetFromFailed(): bool
+    {
+        if ($this->step() !== ResolutionActivationStep::FAILED) {
+            return false;
+        }
+
+        $this->connection->transaction(function (): void {
+            $this->flags->put(self::KEY_STEP, ResolutionActivationStep::INACTIVE->value);
+            $this->flags->forget(self::KEY_FAILURE);
+            $this->flags->forget('tenancy.resolution_failed_from');
+            $this->flags->forget(self::KEY_AWAITING_BOOT);
+        });
+        $this->flags->clearCache();
+
+        return true;
+    }
+
     /** Atomically removes full resolution and returns the activation machine to INACTIVE. */
     public function deactivate(ResolutionActivationStep $expected): bool
     {

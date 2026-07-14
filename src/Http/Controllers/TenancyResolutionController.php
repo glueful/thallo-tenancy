@@ -56,4 +56,18 @@ final class TenancyResolutionController
             return Response::error($exception->getMessage(), Response::HTTP_UNPROCESSABLE_ENTITY);
         }
     }
+
+    public function reset(): Response
+    {
+        try {
+            return Response::success(['resolution' => $this->activation->resetFailed()]);
+        } catch (EnablementLockedException $exception) {
+            return Response::error($exception->getMessage(), Response::HTTP_CONFLICT);
+        } catch (EnablementException $exception) {
+            // Reset is only valid from FAILED; a lifecycle mismatch is a conflict, not a validation error.
+            return Response::error($exception->getMessage(), Response::HTTP_CONFLICT, [
+                'resolution' => $this->activation->status(),
+            ]);
+        }
+    }
 }

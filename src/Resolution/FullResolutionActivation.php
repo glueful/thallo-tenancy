@@ -9,9 +9,11 @@ use Glueful\Extensions\Contracts\Tenancy\TenantDomainAdministration;
 use Glueful\Extensions\Contracts\Tenancy\TenantAdministration;
 use Glueful\Extensions\Contracts\Tenancy\TenantResolutionProbe;
 use Glueful\Extensions\Contracts\Tenancy\TenantRuntimeReadiness;
+use Glueful\Extensions\Tenancy\Resolution\HostNormalizer;
 use Glueful\Routing\RouteCache;
 use Thallo\Tenancy\Enablement\EnablementException;
 use Thallo\Tenancy\Enablement\EnablementLock;
+use Thallo\Tenancy\PublicOrigin\PublicOriginStore;
 use Thallo\Tenancy\System\SystemFlags;
 
 /** Resumable activation of host/header-based full resolution. */
@@ -29,10 +31,14 @@ final class FullResolutionActivation
         private readonly ?TenantResolutionProbe $probe,
         private readonly TenantRuntimeReadiness $readiness,
         private readonly ?TenantAdministration $tenants = null,
+        private readonly ?PublicOriginStore $origin = null,
     ) {
     }
 
-    /** @return array{step:string,mode:string,failure:?string,fresh_boot_required:bool} */
+    /**
+     * @return array{step:string,mode:string,failure:?string,fresh_boot_required:bool,
+     *   origin_restart_required:bool}
+     */
     public function status(): array
     {
         $step = $this->store->step();
@@ -42,14 +48,21 @@ final class FullResolutionActivation
             'mode' => $this->readiness->mode($this->context),
             'failure' => $this->store->failure(),
             'fresh_boot_required' => $step === ResolutionActivationStep::AWAITING_FRESH_BOOT,
+            'origin_restart_required' => $this->origin?->isStale() ?? false,
         ];
     }
 
-    /** @return array{step:string,mode:string,failure:?string,fresh_boot_required:bool} */
+    /**
+     * @return array{step:string,mode:string,failure:?string,fresh_boot_required:bool,
+     *   origin_restart_required:bool}
+     */
     public function advance(): array
     {
         return $this->lock->withLock(function (): array {
             $step = $this->store->step();
+            // Stale origin => throws out (→ 422) without recording a failure, leaving the step
+            // untouched (Pin 1): activation must never proceed against config this process never loaded.
+            $this->origin?->assertFreshForActivation();
             try {
                 $this->assertCanActivate();
                 match ($step) {
@@ -76,10 +89,14 @@ final class FullResolutionActivation
         });
     }
 
-    /** @return array{step:string,mode:string,failure:?string,fresh_boot_required:bool} */
+    /**
+     * @return array{step:string,mode:string,failure:?string,fresh_boot_required:bool,
+     *   origin_restart_required:bool}
+     */
     public function retry(): array
     {
         return $this->lock->withLock(function (): array {
+            $this->origin?->assertFreshForActivation();
             if (!$this->store->retry()) {
                 throw new EnablementException('Resolution activation is not retryable.');
             }
@@ -88,7 +105,62 @@ final class FullResolutionActivation
         });
     }
 
-    /** @return array{step:string,mode:string,failure:?string,fresh_boot_required:bool} */
+    /**
+     * Recover a FAILED activation: release the configured required-host mappings from the default
+     * tenant (resolution is not FULL, so required-host protection is inactive), clear the route
+     * cache, then atomically return the machine to INACTIVE. Any cleanup failure leaves FAILED.
+     *
+     * @return array{step:string,mode:string,failure:?string,fresh_boot_required:bool,
+     *   origin_restart_required:bool}
+     */
+    public function resetFailed(): array
+    {
+        return $this->lock->withLock(function (): array {
+            if ($this->store->step() !== ResolutionActivationStep::FAILED) {
+                throw new EnablementException('Resolution activation is not in a failed state.');
+            }
+
+            $default = $this->flags->defaultTenantUuid();
+            if ($default !== null) {
+                $required = $this->normalizedRequiredHosts();
+                foreach ($this->domains()->listDomains($this->context, $default) as $domain) {
+                    if (in_array($domain['host'], $required, true)) {
+                        $this->domains()->releaseDomain($this->context, $domain['uuid']);
+                    }
+                }
+            }
+
+            $container = $this->context->getContainer();
+            if ($container->has(RouteCache::class)) {
+                $container->get(RouteCache::class)->clear();
+            }
+
+            if (!$this->store->resetFromFailed()) {
+                throw new EnablementException('Resolution activation state changed concurrently.');
+            }
+
+            return $this->status();
+        });
+    }
+
+    /** @return list<string> */
+    private function normalizedRequiredHosts(): array
+    {
+        $configured = config($this->context, 'tenancy.public_origin.default_hosts', []);
+        $hosts = [];
+        foreach (is_array($configured) ? $configured : [] as $host) {
+            if (is_string($host)) {
+                $hosts[] = HostNormalizer::normalize($host);
+            }
+        }
+
+        return $hosts;
+    }
+
+    /**
+     * @return array{step:string,mode:string,failure:?string,fresh_boot_required:bool,
+     *   origin_restart_required:bool}
+     */
     public function deactivate(): array
     {
         return $this->lock->withLock(function (): array {

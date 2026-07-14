@@ -43,6 +43,8 @@ use Thallo\Tenancy\Retrofit\SchemaIntrospector;
 use Thallo\Tenancy\Retrofit\SchemaRetrofit;
 use Thallo\Tenancy\Retrofit\TableRebuilder;
 use Thallo\Tenancy\Retrofit\UniquenessPreflight;
+use Thallo\Tenancy\PublicOrigin\PublicOriginService;
+use Thallo\Tenancy\PublicOrigin\PublicOriginStore;
 use Thallo\Tenancy\System\SystemFlags;
 use Thallo\Tenancy\Tenant\SingleStoreTenant;
 use Thallo\Tenancy\Runtime\TenancyRuntimeReadiness as CompositeTenantRuntimeReadiness;
@@ -64,6 +66,7 @@ use Thallo\Tenancy\Enablement\TenancyEnablement;
 use Thallo\Tenancy\Enablement\DisableGates;
 use Thallo\Tenancy\Enablement\DisableProbe;
 use Thallo\Tenancy\Enablement\TenancyDiagnostics;
+use Thallo\Tenancy\Http\Controllers\PublicOriginController;
 use Thallo\Tenancy\Http\Controllers\TenancyEnablementController;
 use Thallo\Tenancy\Http\Controllers\TenancyResolutionController;
 use Thallo\Tenancy\Http\Controllers\TenantDirectoryController;
@@ -124,6 +127,16 @@ final class TenancyServiceProvider extends ServiceProvider
             ],
             ResolutionActivationStore::class => [
                 'class' => ResolutionActivationStore::class,
+                'shared' => true,
+                'autowire' => true,
+            ],
+            PublicOriginStore::class => [
+                'class' => PublicOriginStore::class,
+                'shared' => true,
+                'autowire' => true,
+            ],
+            PublicOriginService::class => [
+                'class' => PublicOriginService::class,
                 'shared' => true,
                 'autowire' => true,
             ],
@@ -191,6 +204,11 @@ final class TenancyServiceProvider extends ServiceProvider
             ],
             TenancyResolutionController::class => [
                 'class' => TenancyResolutionController::class,
+                'shared' => true,
+                'autowire' => true,
+            ],
+            PublicOriginController::class => [
+                'class' => PublicOriginController::class,
                 'shared' => true,
                 'autowire' => true,
             ],
@@ -512,6 +530,7 @@ final class TenancyServiceProvider extends ServiceProvider
             $probe,
             $container->get(TenantRuntimeReadiness::class),
             $tenants,
+            $container->get(PublicOriginStore::class),
         );
     }
 
@@ -584,6 +603,12 @@ final class TenancyServiceProvider extends ServiceProvider
             MigrationPriority::DEPENDENT,
             'thallo-tenancy',
         );
+
+        // Hydrate the admin-set public origin (base domain + default hosts) from SystemFlags over
+        // config, before the lazy request-time resolver chain is built. Boot-only: overrideConfig()
+        // runs inside the framework boot window (this provider boot() always precedes markBooted()).
+        // Unset persisted values leave file/env config untouched.
+        $context->getContainer()->get(PublicOriginStore::class)->hydrate();
 
         // Register owned tables behind the compound gate (contract bound + scoping enabled).
         $this->registerTenantTables($context);
