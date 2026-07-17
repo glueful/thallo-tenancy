@@ -39,12 +39,29 @@ final class CreateTenantRolePolicyTables implements MigrationInterface
                 $table->unique('tenant_uuid', 'uniq_tenant_role_policy');
             });
         }
+        // Per-workspace availability of the BUILT-IN roles (admin/member/viewer): a row means
+        // "this workspace has disabled this reserved role" — absent = active, so existing
+        // workspaces are untouched. Deliberately separate from tenant_role_overrides
+        // ("offered" and "grants capability X" are different policy dimensions) and from
+        // tenant_roles (which holds only genuine custom roles). `owner` never gets a row.
+        if (!$schema->hasTable('tenant_role_availability')) {
+            $schema->createTable('tenant_role_availability', function ($table): void {
+                $table->bigInteger('id')->primary()->autoIncrement();
+                $table->string('tenant_uuid', 12);
+                $table->string('role', 64);
+                $table->string('status', 16)->default('disabled');
+                $table->string('updated_by', 12)->nullable();
+                $table->timestamp('updated_at')->default('CURRENT_TIMESTAMP');
+                $table->unique(['tenant_uuid', 'role'], 'uniq_tenant_role_availability');
+            });
+        }
     }
 
     public function down(SchemaBuilderInterface $schema): void
     {
         $schema->dropTableIfExists('tenant_role_overrides');
         $schema->dropTableIfExists('tenant_role_policy');
+        $schema->dropTableIfExists('tenant_role_availability');
     }
 
     public function getDescription(): string
