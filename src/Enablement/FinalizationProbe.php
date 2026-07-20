@@ -11,6 +11,7 @@ use Glueful\Extensions\Contracts\Tenancy\TenantEnforcementProbe;
 use Glueful\Extensions\Contracts\Tenancy\TenantRuntimeReadiness;
 use Glueful\Uploader\Contracts\BlobAccessPolicy;
 use Glueful\Uploader\Contracts\BlobCreatedHook;
+use Thallo\Tenancy\Adoption\AdoptionContributorRegistry;
 use Thallo\Tenancy\Cache\TenantCacheSegment;
 use Thallo\Tenancy\System\SystemFlags;
 use Thallo\Tenancy\ThalloTenantTables;
@@ -30,6 +31,7 @@ final class FinalizationProbe
         private readonly ?TenantEnforcementProbe $enforcementProbe = null,
         private readonly ?BlobCreatedHook $blobCreatedHook = null,
         private readonly ?BlobAccessPolicy $blobAccessPolicy = null,
+        private readonly ?AdoptionContributorRegistry $adoptionRegistry = null,
     ) {
     }
 
@@ -110,6 +112,16 @@ final class FinalizationProbe
         foreach (ThalloTenantTables::tableNames() as $table) {
             if (!$this->enforcementProbe->isRegistered($table)) {
                 return false;
+            }
+        }
+
+        if ($this->adoptionRegistry !== null) {
+            foreach ($this->adoptionRegistry->all() as $contributor) {
+                foreach ($contributor->tables() as $table) {
+                    if (!$this->enforcementProbe->isRegistered($table)) {
+                        return false;
+                    }
+                }
             }
         }
 

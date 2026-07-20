@@ -7,8 +7,10 @@ namespace Thallo\Tenancy\Enablement;
 use Glueful\Bootstrap\ApplicationContext;
 use Glueful\Cache\CacheStore;
 use Glueful\Database\Connection;
+use Glueful\Extensions\Contracts\Tenancy\TenantContextRunner;
 use Glueful\Extensions\Contracts\Tenancy\TenantRuntimeReadiness;
 use Glueful\Extensions\Contracts\Tenancy\TenantProvisioner;
+use Thallo\Tenancy\Adoption\AdoptionContributorRegistry;
 use Thallo\Tenancy\Cache\CacheTransition;
 use Thallo\Tenancy\Retrofit\RetrofitMaintenanceGuard;
 use Thallo\Tenancy\Retrofit\SchemaRetrofit;
@@ -31,6 +33,7 @@ final class TenancyEnablement
         private readonly ?DisableGates $disableGates = null,
         private readonly ?DisableProbe $disableProbe = null,
         private readonly ?CacheStore $cache = null,
+        private readonly ?AdoptionContributorRegistry $adoptionRegistry = null,
     ) {
     }
 
@@ -152,6 +155,7 @@ final class TenancyEnablement
 
             try {
                 $retrofit->run($slug, $name, $ownerUserUuid);
+                $this->adoptContributors();
             } catch (\Throwable $exception) {
                 $this->store->recordFailure(EnablementStep::RETROFITTING, $exception->getMessage());
                 return $this->status();
@@ -367,6 +371,46 @@ final class TenancyEnablement
         }
 
         return $container->get(SchemaRetrofit::class);
+    }
+
+    /**
+     * Give every registered {@see AdoptionContributor} one chance to adopt sentinel rows into the
+     * just-retrofitted default tenant. Runs INSIDE the RETROFITTING try — after the schema has
+     * been widened and the default tenant provisioned, before the CAS to ENABLING_ENFORCEMENT — so
+     * a throwing contributor fails the step exactly like a failing retrofit (recordFailure via the
+     * caller's catch, resumable via retry()). Zero registered contributors is a byte-identical no-op.
+     */
+    private function adoptContributors(): void
+    {
+        if ($this->adoptionRegistry === null) {
+            return;
+        }
+        $contributors = $this->adoptionRegistry->all();
+        if ($contributors === []) {
+            return;
+        }
+
+        $tenantUuid = $this->flags->defaultTenantUuid();
+        if ($tenantUuid === null) {
+            throw new EnablementException('Adoption requires a default tenant pointer after retrofit.');
+        }
+
+        $runner = $this->resolveContextRunner();
+        foreach ($contributors as $contributor) {
+            $runner->runAsSystem(fn (): mixed => $contributor->adopt($this->context, $tenantUuid));
+        }
+    }
+
+    private function resolveContextRunner(): TenantContextRunner
+    {
+        $container = $this->context->getContainer();
+        if (!$container->has(TenantContextRunner::class)) {
+            throw new EnablementException(
+                'Tenant context runner is unavailable; registered adoption contributors cannot run.',
+            );
+        }
+
+        return $container->get(TenantContextRunner::class);
     }
 
     private function activateEnforcement(): EnablementStatus

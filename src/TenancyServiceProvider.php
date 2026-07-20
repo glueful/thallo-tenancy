@@ -27,6 +27,7 @@ use Thallo\Contracts\Capability\CapabilityRegistry;
 use Thallo\Contracts\Settings\SystemChannel;
 use Thallo\Contracts\Tenancy\WriteBarrier;
 use Thallo\Contracts\Tenancy\TenantWriteScope;
+use Thallo\Tenancy\Adoption\AdoptionContributorRegistry;
 use Thallo\Tenancy\Compat\CompatWriteScope;
 use Thallo\Tenancy\Retrofit\AdditiveRetrofit;
 use Thallo\Tenancy\Retrofit\DefaultTenant;
@@ -189,6 +190,15 @@ final class TenancyServiceProvider extends ServiceProvider
             ],
             TenancyDiagnostics::class => [
                 'class' => TenancyDiagnostics::class,
+                'shared' => true,
+                'autowire' => true,
+            ],
+            // Enable-time tenant-adoption contributor seam — bound SHARED and UNCONDITIONALLY (unlike
+            // the tenancy-gated table registration below): TenancyEnablement::confirm() and
+            // FinalizationProbe consult it regardless of whether any pack has registered a contributor,
+            // so zero registrations must stay reachable (and a no-op) from a fresh, ungated boot.
+            AdoptionContributorRegistry::class => [
+                'class' => AdoptionContributorRegistry::class,
                 'shared' => true,
                 'autowire' => true,
             ],
@@ -576,6 +586,7 @@ final class TenancyServiceProvider extends ServiceProvider
             $container->has(TenantEnforcementProbe::class) ? $container->get(TenantEnforcementProbe::class) : null,
             $container->has(BlobCreatedHook::class) ? $container->get(BlobCreatedHook::class) : null,
             $container->has(BlobAccessPolicy::class) ? $container->get(BlobAccessPolicy::class) : null,
+            $container->get(AdoptionContributorRegistry::class),
         );
     }
 
