@@ -444,6 +444,15 @@ final class TenancyServiceProvider extends ServiceProvider
                 $registry->register($handler);
             }
         }
+        // Commerce-Slice-1 Task 10: thallo-commerce's CommercePurgeHandler, mirroring the
+        // thallo.collections alias immediately above — this pack must not know the pack's
+        // concrete class, only the shared string alias its provider exposes.
+        if ($container->has('thallo.commerce.purge_handler')) {
+            $handler = $container->get('thallo.commerce.purge_handler');
+            if ($handler instanceof \Thallo\Tenancy\Purge\PurgeHandler) {
+                $registry->register($handler);
+            }
+        }
         return $registry;
     }
 
