@@ -16,6 +16,7 @@ use Thallo\Tenancy\Runtime\BootstrapTenantCreationGuard;
 use Thallo\Tenancy\StarterSeedException;
 use Thallo\Contracts\Tenancy\TenancyLifecycleAudit;
 use Thallo\Tenancy\Purge\PurgeCoordinator;
+use Thallo\Tenancy\Purge\PurgeRunRepository;
 
 final class TenantManagementController
 {
@@ -39,10 +40,41 @@ final class TenantManagementController
         }
         $status = $request->query->get('status');
 
-        return Response::success(['tenants' => $tenants->listTenants(
+        return Response::success(['tenants' => $this->withPurgeProgress($tenants->listTenants(
             $this->context,
             is_string($status) && $status !== '' ? $status : null
-        )]);
+        ))]);
+    }
+
+    /**
+     * Honest `purging` tags: a purging tenant additionally reports `purge_stalled` — true when
+     * its run needs operator attention (no worker consuming, dispatch/job failure, dead lease
+     * — {@see PurgeRunRepository::isStalled()}), so the UI can say "waiting for a worker"
+     * instead of an indefinitely spinning tag. Non-purging tenants are untouched.
+     *
+     * @param list<array<string, mixed>> $tenants
+     * @return list<array<string, mixed>>
+     */
+    private function withPurgeProgress(array $tenants): array
+    {
+        $runs = $this->services?->purgeRuns();
+        if ($runs === null) {
+            return $tenants;
+        }
+
+        foreach ($tenants as &$tenant) {
+            if (($tenant['status'] ?? null) !== 'purging') {
+                continue;
+            }
+            try {
+                $run = $runs->findByTenant($this->context, (string) ($tenant['uuid'] ?? ''));
+                $tenant['purge_stalled'] = $run !== null && PurgeRunRepository::isStalled($run);
+            } catch (\Throwable) {
+                // A progress read must never break the list itself.
+            }
+        }
+
+        return $tenants;
     }
 
     public function create(Request $request): Response

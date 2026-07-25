@@ -41,6 +41,43 @@ final class PurgeRunRepository
         return $row;
     }
 
+    /**
+     * "Purging, but nothing is actually purging it": true when a run needs OPERATOR attention —
+     * dispatch never landed (`requested`/`dispatch_failed`), the job failed, a worker died
+     * mid-run (lease expired), or the run has sat `queued` untouched past the grace window
+     * (no queue worker consuming — the dev-install classic). A fresh `queued` run inside the
+     * window and a leased `running` run are healthy, not stalled.
+     *
+     * @param array<string, mixed> $run A `thallo_tenant_purge_runs` row
+     */
+    public static function isStalled(array $run, ?\DateTimeImmutable $now = null): bool
+    {
+        $now ??= new \DateTimeImmutable();
+        $status = (string) ($run['status'] ?? '');
+
+        if (in_array($status, ['requested', 'dispatch_failed', 'failed'], true)) {
+            return true;
+        }
+        if (!in_array($status, ['queued', 'running'], true)) {
+            return false;
+        }
+
+        $lease = $run['lease_expires_at'] ?? null;
+        if (is_string($lease) && $lease !== '' && new \DateTimeImmutable($lease) < $now) {
+            return true;
+        }
+
+        if ($status === 'queued' && (int) ($run['attempts'] ?? 0) === 0) {
+            $created = $run['created_at'] ?? null;
+
+            return is_string($created)
+                && $created !== ''
+                && new \DateTimeImmutable($created) <= $now->modify('-120 seconds');
+        }
+
+        return false;
+    }
+
     /** @return array<string, mixed>|null */
     public function findByTenant(ApplicationContext $context, string $tenantUuid): ?array
     {

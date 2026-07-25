@@ -38,6 +38,11 @@ final class TenantManagementServices
         return $this->resolve(TenantSeedRepair::class);
     }
 
+    public function purgeRuns(): ?\Thallo\Tenancy\Purge\PurgeRunRepository
+    {
+        return $this->resolve(\Thallo\Tenancy\Purge\PurgeRunRepository::class);
+    }
+
     public function purges(): ?PurgeCoordinator
     {
         return $this->resolve(PurgeCoordinator::class);
