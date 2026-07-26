@@ -1,7 +1,7 @@
 {
   "name": "glueful/thallo-tenancy",
   "description": "Multi-tenancy foundation for Thallo: tenant-owned schema, scoping, seed/sync and enablement as a capability pack.",
-  "type": "glueful-extension",
+  "type": "library",
   "license": "MIT",
   "authors": [
     { "name": "Michael Tawiah Sowah", "email": "michael@glueful.dev" }

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Thallo\Tenancy;
 
+use Glueful\Extensions\DeclaresLoadOrder;
 use Glueful\Bootstrap\ApplicationContext;
 use Glueful\Database\Execution\QueryExecutor;
 use Glueful\Database\Migrations\MigrationPriority;
@@ -88,8 +89,24 @@ use Thallo\Tenancy\Reverification\DomainReverificationSweep;
 use Thallo\Tenancy\Reverification\DomainReverificationSweepLock;
 use Thallo\Tenancy\Reverification\DomainReverificationAuditListener;
 
-final class TenancyServiceProvider extends ServiceProvider
+final class TenancyServiceProvider extends ServiceProvider implements DeclaresLoadOrder
 {
+    public static function loadAfter(): array
+    {
+        return [];
+    }
+
+    /**
+     * Post-extension tier (modules-not-extensions spec §5.2): app-integrated modules load
+     * AFTER the extension universe, reproducing the pre-conversion order in which they lived
+     * at the tail of config/extensions.php. Inter-module order comes from the
+     * serviceproviders.php list (the orderer's stable tie-break).
+     */
+    public static function loadPriority(): int
+    {
+        return 100;
+    }
+
     /** @return array<string, array<string, mixed>> */
     public static function services(): array
     {

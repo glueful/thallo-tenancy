@@ -90,7 +90,15 @@ final class ExtensionActivation implements ExtensionActivationContract
         if (!in_array(self::PROVIDER, $current, true)) {
             (new ExtensionStateWriter())->enable(config_path($this->context, 'extensions.php'), self::PROVIDER);
         }
-        app($this->context, ExtensionManager::class)->writeCacheNow($resolution->providers);
+        // No-arg on purpose: the cache must carry the FULL provider list (app modules from
+        // serviceproviders.php + extensions). Passing $resolution->providers (extensions only)
+        // would persist a cache without the always-on thallo modules — a production boot with
+        // no CMS organs. The resolver above remains the validation gate; the cache write
+        // re-resolves the combined, ordered list itself. The clear makes that re-resolve see
+        // the JUST-WRITTEN extensions.php instead of the enabled list cached before the write
+        // (framework 1.72.0's writeCacheNow() resolves through the context config cache).
+        $this->context->clearConfigCache();
+        app($this->context, ExtensionManager::class)->writeCacheNow();
     }
 
     public function deactivate(): void
@@ -108,7 +116,10 @@ final class ExtensionActivation implements ExtensionActivationContract
         if (in_array(self::PROVIDER, $current, true)) {
             (new ExtensionStateWriter())->disable(config_path($this->context, 'extensions.php'), self::PROVIDER);
         }
-        app($this->context, ExtensionManager::class)->writeCacheNow($resolution->providers);
+        // No-arg + cache clear for the same reasons as activate(): the cache must include the
+        // app modules, resolved from the just-written (not pre-write cached) enabled list.
+        $this->context->clearConfigCache();
+        app($this->context, ExtensionManager::class)->writeCacheNow();
     }
 
     /** @return array{applied:list<string>,failed:list<string>} */
