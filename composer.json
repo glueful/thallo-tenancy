@@ -34,9 +34,6 @@
                     "path": "migrations",
                     "priority": "dependent",
                     "mode": "core",
-                    "legacyAliases": [
-                        "thallo-tenancy"
-                    ],
                     "verifier": "Thallo\\Tenancy\\Schema\\TenancySchemaVerifier"
                 }
             ]
