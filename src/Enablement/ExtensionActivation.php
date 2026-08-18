@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace Thallo\Tenancy\Enablement;
 
 use Glueful\Bootstrap\ApplicationContext;
-use Glueful\Database\Migrations\MigrationManager;
 use Glueful\Extensions\EnabledProviders;
 use Glueful\Extensions\ExtensionManager;
 use Glueful\Extensions\ExtensionResolver;
@@ -15,9 +14,11 @@ use Glueful\Extensions\Install\HostNotWritableException;
 use Glueful\Extensions\Install\InstallDisabledException;
 use Glueful\Extensions\Install\PackageNotAllowedException;
 use Glueful\Extensions\PackageManifest;
+use Glueful\Extensions\Schema\ExtensionOperation;
+use Glueful\Extensions\Schema\ExtensionSchemaExecutor;
 use Glueful\Support\Version;
 
-final class ExtensionActivation implements ExtensionActivationContract
+class ExtensionActivation implements ExtensionActivationContract
 {
     public const PACKAGE = 'glueful/tenancy';
     public const PROVIDER = 'Glueful\\Extensions\\Tenancy\\TenancyServiceProvider';
@@ -122,10 +123,42 @@ final class ExtensionActivation implements ExtensionActivationContract
         app($this->context, ExtensionManager::class)->writeCacheNow();
     }
 
-    /** @return array{applied:list<string>,failed:list<string>} */
+    /**
+     * The protected migration lane (schema program Task 8): the shared executor migrates any
+     * still-pending CORE prerequisites (which covers the glueful/thallo-tenancy descriptor
+     * without a name-derived source list here) plus glueful/tenancy's own sources, under the
+     * same bootstrap/lock/readiness custody as every enable — recorded as a core-owned
+     * protected_migrate operation. It NEVER touches provider state; the later protected
+     * activation step keeps sole custody of that write. Failures surface as the contract's
+     * failed list, carrying the basename, the operation id/status, and the error, so the
+     * enablement state machine's recordFailure path stays exactly as it is. A held lock or a
+     * missing bootstrap throws inside the executor within its bounded wait and lands here as a
+     * step failure, never a hang.
+     *
+     * @return array{applied:list<string>,failed:list<string>}
+     */
     public function migrate(): array
     {
-        return app($this->context, MigrationManager::class)->migrate();
+        try {
+            $operation = $this->executor()->migrateProtected(self::PACKAGE, 'tenancy-enablement');
+        } catch (\Throwable $exception) {
+            return ['applied' => [], 'failed' => [$exception->getMessage()]];
+        }
+
+        if ($operation->status !== ExtensionOperation::STATUS_SUCCEEDED) {
+            $detail = ($operation->failedMigration ?? 'migration')
+                . " (operation #{$operation->id}: {$operation->status})"
+                . ($operation->error !== null ? ' — ' . $operation->error : '');
+            return ['applied' => [], 'failed' => [$detail]];
+        }
+
+        return ['applied' => [], 'failed' => []];
+    }
+
+    /** Overridable seam: the shared schema executor from the app container. */
+    protected function executor(): ExtensionSchemaExecutor
+    {
+        return app($this->context, ExtensionSchemaExecutor::class);
     }
 
     /** @return array<string,\Glueful\Extensions\ExtensionCandidate> */
