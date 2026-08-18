@@ -638,6 +638,7 @@ final class TenancyServiceProvider extends ServiceProvider implements DeclaresLo
             'thallo.tenancy',
             label: 'Multi-tenancy',
             description: 'Tenant-owned content model + data, scoping, seed/sync and enablement.',
+            owningPackage: 'glueful/tenancy',
         ));
 
         // Migrations load unconditionally (outside any gate) so the system-channel table exists
