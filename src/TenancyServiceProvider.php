@@ -7,7 +7,6 @@ namespace Thallo\Tenancy;
 use Glueful\Extensions\DeclaresLoadOrder;
 use Glueful\Bootstrap\ApplicationContext;
 use Glueful\Database\Execution\QueryExecutor;
-use Glueful\Database\Migrations\MigrationPriority;
 use Glueful\Extensions\Contracts\Tenancy\TenantTableRegistry as TenantTableRegistryContract;
 use Glueful\Extensions\Contracts\Tenancy\TenantContextRunner;
 use Glueful\Extensions\Contracts\Tenancy\TenantRuntimeReadiness;
@@ -644,11 +643,7 @@ final class TenancyServiceProvider extends ServiceProvider implements DeclaresLo
         // Migrations load unconditionally (outside any gate) so the system-channel table exists
         // for every install — the retrofit that adds tenant_uuid is NOT here (it is an
         // enable-time operation, spec §7.4).
-        $this->loadMigrationsFrom(
-            __DIR__ . '/../migrations',
-            MigrationPriority::DEPENDENT,
-            'thallo-tenancy',
-        );
+        // Migrations are declared by the composer manifest (extra.glueful.migrations).
 
         // Hydrate the admin-set public origin (base domain + default hosts) from SystemFlags over
         // config, before the lazy request-time resolver chain is built. Boot-only: overrideConfig()
