@@ -1,43 +1,42 @@
 {
-    "name": "glueful/thallo-tenancy",
-    "description": "Multi-tenancy foundation for Thallo: tenant-owned schema, scoping, seed/sync and enablement as a capability pack.",
-    "type": "library",
-    "license": "MIT",
-    "authors": [
+  "name": "glueful/thallo-tenancy",
+  "description": "Multi-tenancy foundation for Thallo: tenant-owned schema, scoping, seed/sync and enablement as a capability pack.",
+  "type": "library",
+  "license": "MIT",
+  "authors": [
+    {
+      "name": "Michael Tawiah Sowah",
+      "email": "michael@glueful.dev"
+    }
+  ],
+  "require": {
+    "php": "^8.3",
+    "glueful/thallo-contracts": "self.version",
+    "glueful/extension-contracts": "*",
+    "glueful/framework": "^1.68.0"
+  },
+  "autoload": {
+    "psr-4": {
+      "Thallo\\Tenancy\\": "src/"
+    }
+  },
+  "extra": {
+    "glueful": {
+      "provider": "Thallo\\Tenancy\\TenancyServiceProvider",
+      "requires": {
+        "glueful": ">=1.79.0",
+        "extensions": []
+      },
+      "migrations": [
         {
-            "name": "Michael Tawiah Sowah",
-            "email": "michael@glueful.dev"
+          "id": "default",
+          "path": "migrations",
+          "priority": "dependent",
+          "mode": "core",
+          "verifier": "Thallo\\Tenancy\\Schema\\TenancySchemaVerifier"
         }
-    ],
-    "version": "0.1.0",
-    "require": {
-        "php": "^8.3",
-        "glueful/thallo-contracts": "*",
-        "glueful/extension-contracts": "*",
-        "glueful/framework": "^1.68.0"
-    },
-    "autoload": {
-        "psr-4": {
-            "Thallo\\Tenancy\\": "src/"
-        }
-    },
-    "extra": {
-        "glueful": {
-            "provider": "Thallo\\Tenancy\\TenancyServiceProvider",
-            "requires": {
-                "glueful": ">=1.79.0",
-                "extensions": []
-            },
-            "migrations": [
-                {
-                    "id": "default",
-                    "path": "migrations",
-                    "priority": "dependent",
-                    "mode": "core",
-                    "verifier": "Thallo\\Tenancy\\Schema\\TenancySchemaVerifier"
-                }
-            ]
-        }
-    },
-    "minimum-stability": "stable"
+      ]
+    }
+  },
+  "minimum-stability": "stable"
 }
