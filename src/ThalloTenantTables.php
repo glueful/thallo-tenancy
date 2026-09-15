@@ -54,6 +54,7 @@ final class ThalloTenantTables
             'block_types' => self::row($def, [['uniq_block_type_slug', ['tenant_uuid', 'slug']]]),
             'block_type_migrations' => self::row($def),
             'style_classes' => self::row($def, [['uniq_style_class_name_key', ['tenant_uuid', 'name_key']]]),
+            'style_generations' => self::row($def, [['uniq_style_generation_site', ['tenant_uuid', 'site']]]),
             'regions' => self::row($def, [], 'rebuild'), // PK is `slug` => (tenant_uuid, slug)
 
             // --- core instance data ---
