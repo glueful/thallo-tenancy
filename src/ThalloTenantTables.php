@@ -94,6 +94,10 @@ final class ThalloTenantTables
             'navigation_menus' => self::row($def, [['uniq_navigation_menu_slug', ['tenant_uuid', 'slug']]]),
             'navigation_items' => self::row($inst),
             'seo_meta' => self::row($inst, [[null, ['tenant_uuid', 'entry_uuid', 'locale']]]),
+            // The Postgres search index: one row per published entry+locale. Owned, so a search
+            // only ever reads the workspace's own rows — also for an all-access API key, where no
+            // content-type filter narrows the query.
+            'search_documents' => self::row($inst, [['uniq_search_documents_doc', ['tenant_uuid', 'doc_id']]]),
             'analytics_facts' => self::row($inst),
             'analytics_daily' => self::row($inst, [[null, ['tenant_uuid', 'day', 'event', 'subject']]]),
             'analytics_active_actors' => self::row(
