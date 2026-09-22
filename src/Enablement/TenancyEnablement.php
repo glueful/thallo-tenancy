@@ -57,7 +57,45 @@ final class TenancyEnablement
             pendingName: $this->store->pendingName(),
             failure: $this->store->failure(),
             cliFallback: $cliFallback,
+            blockers: in_array($step, self::PRE_RETROFIT, true) ? $this->blockers() : [],
         );
+    }
+
+    /** The steps before the retrofit, while a blocker can still stop the flow. */
+    private const PRE_RETROFIT = [
+        EnablementStep::OFF,
+        EnablementStep::INSTALLING,
+        EnablementStep::AWAITING_INSTALL,
+        EnablementStep::ENABLING_EXTENSION,
+        EnablementStep::AWAITING_PROVIDER_BOOT,
+        EnablementStep::MIGRATING_EXTENSION,
+        EnablementStep::AWAITING_CONFIRM,
+    ];
+
+    /**
+     * What would refuse enabling, said before anything starts: the flow refuses on the same two
+     * conditions, and used to find the collections one only after installing the extension.
+     *
+     * @return list<array{code: string, message: string}>
+     */
+    private function blockers(): array
+    {
+        $blockers = [];
+        if ($this->hasCollections()) {
+            $blockers[] = [
+                'code' => 'collections',
+                'message' => 'A data collection is defined, and collections cannot be split into workspaces yet. '
+                    . 'Delete the collections to enable workspaces.',
+            ];
+        }
+        if (!$this->cacheTransition->supportsPatternPurge()) {
+            $blockers[] = [
+                'code' => 'cache',
+                'message' => 'The cache driver cannot delete keys by pattern, which workspaces need. '
+                    . 'Use Redis (CACHE_DRIVER=redis).',
+            ];
+        }
+        return $blockers;
     }
 
     public function begin(): EnablementStatus
@@ -91,6 +129,15 @@ final class TenancyEnablement
 
             if ($step === EnablementStep::ENABLING_ENFORCEMENT) {
                 return $this->activateEnforcement();
+            }
+
+            if (($step === EnablementStep::OFF || $step === EnablementStep::INSTALLING) && $this->hasCollections()) {
+                $this->store->recordFailure(
+                    EnablementStep::OFF,
+                    'Enable blocked: a data collection is defined, and collections cannot be split into '
+                    . 'workspaces yet.',
+                );
+                return $this->status();
             }
 
             if (

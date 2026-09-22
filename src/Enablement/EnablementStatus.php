@@ -17,10 +17,12 @@ final class EnablementStatus
         public readonly ?string $pendingName = null,
         public readonly ?string $failure = null,
         public readonly ?string $cliFallback = null,
+        /** @var list<array{code: string, message: string}> what would refuse enabling, before it starts */
+        public readonly array $blockers = [],
     ) {
     }
 
-    /** @return array<string, bool|int|string|null> */
+    /** @return array<string, mixed> */
     public function toArray(): array
     {
         return [
@@ -34,6 +36,7 @@ final class EnablementStatus
             'pending_name' => $this->pendingName,
             'failure' => $this->failure,
             'cli_fallback' => $this->cliFallback,
+            'blockers' => $this->blockers,
         ];
     }
 }
