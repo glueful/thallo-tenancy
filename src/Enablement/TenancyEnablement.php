@@ -340,7 +340,10 @@ final class TenancyEnablement
                 EnablementStep::AWAITING_CONFIRM,
             ];
 
-            if (!in_array($step, $cancelable, true)) {
+            // A failed run is judged by the step it failed at: a failure before the retrofit
+            // leaves nothing to undo, so it can be abandoned like the step itself.
+            $judged = $step === EnablementStep::FAILED ? $this->store->failedFrom() : $step;
+            if (!in_array($judged, $cancelable, true)) {
                 throw new EnablementException('Enablement can no longer be canceled from ' . $step->value . '.');
             }
 
