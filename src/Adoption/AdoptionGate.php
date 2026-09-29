@@ -24,15 +24,19 @@ use PDOException;
  * one, so a worker that holds it indefinitely fails the flip resumably instead of hanging it.
  * The hold belongs to the PROCESS, not to one instance: a process is one unit of work, and a
  * second container booted in it (tests do) must neither hold twice nor keep a hold nobody can
- * release. Other drivers have no retrofit, so the gate is open there.
+ * release. It is kept per database — advisory locks never conflict across databases, so a hold
+ * taken in another database guards nothing here. Other drivers have no retrofit, so the gate is
+ * open there.
  */
 final class AdoptionGate
 {
     private const KEY = 4823712;
 
     private static ?PDO $participantPdo = null;
+    private static ?string $participantDatabase = null;
     private static bool $held = false;
     private ?PDO $maintenancePdo = null;
+    private ?string $database = null;
     private bool $exclusive = false;
 
     public function __construct(private readonly Connection $connection)
@@ -42,7 +46,7 @@ final class AdoptionGate
     /** Hold the gate shared for the rest of this unit of work; false while a flip holds it. */
     public function holdShared(): bool
     {
-        if (self::$held || !$this->supported()) {
+        if (!$this->supported() || $this->isHeld()) {
             return true;
         }
 
@@ -55,17 +59,22 @@ final class AdoptionGate
 
     public function isHeld(): bool
     {
-        return self::$held;
+        return self::$held && $this->supported() && self::$participantDatabase === $this->database();
     }
 
     /** End this unit of work's hold early (the session's close ends it otherwise). */
     public function release(): void
     {
-        if (!self::$held) {
+        if (!$this->isHeld()) {
             return;
         }
-        $this->participant()->exec('SELECT pg_advisory_unlock_shared(' . self::KEY . ')');
-        self::$held = false;
+        try {
+            $this->participant()->exec('SELECT pg_advisory_unlock_shared(' . self::KEY . ')');
+        } catch (PDOException) {
+            self::$participantPdo = null; // the session is gone, and its lock with it
+        } finally {
+            self::$held = false;
+        }
     }
 
     /**
@@ -116,7 +125,20 @@ final class AdoptionGate
 
     private function participant(): PDO
     {
+        if (self::$participantDatabase !== $this->database()) {
+            self::$participantPdo = null; // closing another database's session ends its hold there
+            self::$held = false;
+            self::$participantDatabase = $this->database();
+        }
+
         return self::$participantPdo ??= $this->connection->newPdo();
+    }
+
+    private function database(): string
+    {
+        return $this->database ??= (string) $this->connection->getPDO()
+            ->query('SELECT current_database()')
+            ->fetchColumn();
     }
 
     private function maintenance(): PDO
