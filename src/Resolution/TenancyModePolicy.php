@@ -7,6 +7,8 @@ namespace Thallo\Tenancy\Resolution;
 use Glueful\Bootstrap\ApplicationContext;
 use Glueful\Extensions\Contracts\Tenancy\CurrentTenantResolver;
 use Psr\Container\ContainerInterface;
+use Thallo\Tenancy\Adoption\AdoptionGate;
+use Thallo\Tenancy\Retrofit\RetrofitInProgressException;
 use Thallo\Tenancy\System\SystemFlags;
 
 /**
@@ -21,6 +23,11 @@ use Thallo\Tenancy\System\SystemFlags;
  *   (c) enforcement active                         -> delegates to the shared, request-scoped
  *       {@see CurrentTenantResolver} (never rebound; re-resolved fresh on every call)
  *
+ * With an {@see AdoptionGate}, resolving the sentinel holds the gate for the rest of the unit of
+ * work, and the mode is read again once it holds: the flip that moves single-store rows into the
+ * default tenant can then never overlap work that saw the sentinel, and resolving during the flip
+ * fails closed ({@see RetrofitInProgressException}).
+ *
  * The mode is read LIVE on each call: `enforcementActive()` clears the flags cache before
  * answering, so a flip mid-process shows on the very next call. Nothing here caches a mode or a
  * tenant; only the shared resolver SERVICE is memoized, lazily, the first time mode (c) is entered.
@@ -32,6 +39,7 @@ final class TenancyModePolicy
     public function __construct(
         private readonly SystemFlags $flags,
         private readonly ContainerInterface $container,
+        private readonly ?AdoptionGate $gate = null,
     ) {
     }
 
@@ -46,7 +54,18 @@ final class TenancyModePolicy
 
     public function tenantUuid(ApplicationContext $context): string
     {
-        return match ($this->mode()) {
+        $mode = $this->mode();
+        if ($mode === TenancyMode::Sentinel && $this->gate !== null) {
+            if (!$this->gate->holdShared()) {
+                throw new RetrofitInProgressException();
+            }
+            $mode = $this->mode(); // the flip may have committed before the hold
+            if ($mode !== TenancyMode::Sentinel) {
+                $this->gate->release();
+            }
+        }
+
+        return match ($mode) {
             TenancyMode::Enforced => $this->sharedResolver()->tenantUuid($context),
             TenancyMode::DefaultTenant => $this->defaultTenantUuid(),
             TenancyMode::Sentinel => '',

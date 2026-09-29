@@ -41,8 +41,12 @@ final class AdoptionGate
     /** @var WeakMap<PDO, true>|null the sessions that hold the gate shared */
     private static ?WeakMap $holds = null;
 
-    /** @var WeakReference<PDO>|null the session this gate last held on */
+    /** Bumped when the process's unit of work ends, so no gate mistakes an ended hold for a lost one. */
+    private static int $unit = 0;
+
+    /** @var WeakReference<PDO>|null the session this gate last held on, in unit {@see $heldInUnit} */
     private ?WeakReference $heldOn = null;
+    private int $heldInUnit = 0;
 
     private ?PDO $maintenancePdo = null;
     private bool $exclusive = false;
@@ -58,8 +62,8 @@ final class AdoptionGate
      */
     public function holdShared(): bool
     {
-        if (!$this->supported()) {
-            return true;
+        if (!$this->supported() || $this->exclusive) {
+            return true; // the process that closed the gate is the one moving the rows
         }
         $pdo = $this->connection->getPDO();
         if (isset(self::holds()[$pdo])) {
@@ -67,8 +71,9 @@ final class AdoptionGate
         }
         if ($this->heldOn !== null) {
             $lostOn = $this->heldOn->get();
+            $sameUnit = $this->heldInUnit === self::$unit;
             $this->heldOn = null;
-            if ($lostOn !== $pdo) {
+            if ($sameUnit && $lostOn !== $pdo) {
                 throw new RetrofitInProgressException();
             }
         }
@@ -79,13 +84,31 @@ final class AdoptionGate
         }
         self::holds()[$pdo] = true;
         $this->heldOn = WeakReference::create($pdo);
+        $this->heldInUnit = self::$unit;
 
         return true;
     }
 
     public function isHeld(): bool
     {
-        return $this->supported() && isset(self::holds()[$this->connection->getPDO()]);
+        return $this->exclusive || ($this->supported() && isset(self::holds()[$this->connection->getPDO()]));
+    }
+
+    /**
+     * End the process's unit of work: release every hold it took, on every session. A request ends
+     * with its sessions; a long-lived worker calls this between jobs.
+     */
+    public static function endUnitOfWork(): void
+    {
+        foreach (self::holds() as $pdo => $held) {
+            try {
+                $pdo->query('SELECT pg_advisory_unlock_shared(' . self::KEY . ')')->fetchColumn();
+            } catch (PDOException) {
+                // The session is gone, and its lock with it.
+            }
+        }
+        self::$holds = new WeakMap();
+        self::$unit++;
     }
 
     /** End this unit of work's hold early (the session's close ends it otherwise). */
