@@ -201,8 +201,14 @@ final class TenancyEnablement
             $this->store->setStep(EnablementStep::RETROFITTING);
 
             try {
-                $retrofit->run($slug, $name, $ownerUserUuid);
-                $this->adoptContributors();
+                $retrofit->run(
+                    $slug,
+                    $name,
+                    $ownerUserUuid,
+                    function (string $tenantUuid): void {
+                        $this->adoptContributors($tenantUuid);
+                    },
+                );
             } catch (\Throwable $exception) {
                 $this->store->recordFailure(EnablementStep::RETROFITTING, $exception->getMessage());
                 return $this->status();
@@ -425,12 +431,14 @@ final class TenancyEnablement
 
     /**
      * Give every registered {@see AdoptionContributor} one chance to adopt sentinel rows into the
-     * just-retrofitted default tenant. Runs INSIDE the RETROFITTING try — after the schema has
-     * been widened and the default tenant provisioned, before the CAS to ENABLING_ENFORCEMENT — so
-     * a throwing contributor fails the step exactly like a failing retrofit (recordFailure via the
-     * caller's catch, resumable via retry()). Zero registered contributors is a byte-identical no-op.
+     * just-provisioned default tenant. {@see SchemaRetrofit::run()} calls this INSIDE the flip —
+     * the one transaction that records the widened schema state, with the adoption gate closed —
+     * so no resolver ever sees the default tenant before the rows it names are there. A throwing
+     * contributor rolls the flip back and fails the step exactly like a failing retrofit
+     * (recordFailure via the caller's catch, resumable via retry()). Zero registered contributors
+     * is a no-op.
      */
-    private function adoptContributors(): void
+    private function adoptContributors(string $tenantUuid): void
     {
         if ($this->adoptionRegistry === null) {
             return;
@@ -438,11 +446,6 @@ final class TenancyEnablement
         $contributors = $this->adoptionRegistry->all();
         if ($contributors === []) {
             return;
-        }
-
-        $tenantUuid = $this->flags->defaultTenantUuid();
-        if ($tenantUuid === null) {
-            throw new EnablementException('Adoption requires a default tenant pointer after retrofit.');
         }
 
         $runner = $this->resolveContextRunner();

@@ -7,6 +7,7 @@ namespace Thallo\Tenancy\Retrofit;
 use Glueful\Database\Connection;
 use RuntimeException;
 use Thallo\Contracts\Settings\SystemKeyReconciler;
+use Thallo\Tenancy\Adoption\AdoptionGate;
 use Thallo\Tenancy\System\SystemFlags;
 use Thallo\Tenancy\ThalloTenantTables;
 
@@ -54,11 +55,22 @@ final class SchemaRetrofit
         private readonly SystemFlags $flags,
         private readonly MediaOwnershipBackfill $mediaOwnership,
         private readonly MutationBoundaryLock $mutationLock,
+        private readonly AdoptionGate $adoptionGate,
     ) {
     }
 
-    public function run(string $slug, string $name, string $ownerUserUuid): RetrofitReport
-    {
+    /**
+     * @param (\Closure(string): void)|null $adoptAtFlip adopts unassigned rows into the default
+     *        tenant (it receives its uuid) inside the flip's transaction — see step 8
+     * @param int $adoptionGateTimeoutMs how long the flip waits for single-store work to end
+     */
+    public function run(
+        string $slug,
+        string $name,
+        string $ownerUserUuid,
+        ?\Closure $adoptAtFlip = null,
+        int $adoptionGateTimeoutMs = 10000,
+    ): RetrofitReport {
         // 1. Driver gate — reject unsupported drivers before touching anything.
         $this->ddlFactory->for($this->introspector->driver());
 
@@ -116,8 +128,25 @@ final class SchemaRetrofit
                 );
             }
 
-            // 8. Record the widened schema state.
-            $this->flags->put('tenancy.schema_state', 'widened');
+            // 8. The flip: record the widened schema state and adopt unassigned rows into the
+            //    default tenant in ONE transaction, with the adoption gate closed. Resolvers that
+            //    answer from the schema state (the single store's '' before, the default tenant
+            //    after) never see the new state before the rows it points at are there, and no unit
+            //    of work that saw the single store overlaps the move — one still running fails the
+            //    flip instead (AdoptionGateBusyException, resumable). This process is not in the
+            //    middle of single-store work, so its own hold, if any, ends first.
+            $this->adoptionGate->release();
+            $this->adoptionGate->acquireExclusive($adoptionGateTimeoutMs);
+            try {
+                $this->connection->transaction(function () use ($adoptAtFlip, $tenantUuid): void {
+                    if ($adoptAtFlip !== null) {
+                        $adoptAtFlip($tenantUuid);
+                    }
+                    $this->flags->put('tenancy.schema_state', 'widened');
+                });
+            } finally {
+                $this->adoptionGate->releaseExclusive();
+            }
 
             // 9. The persisted flag must agree with the live schema.
             $agreement = $this->diagnostics->checkAgreement();

@@ -11,9 +11,12 @@ use Glueful\Bootstrap\ApplicationContext;
  * table and provisions the default tenant, each registered contributor gets one chance to adopt
  * sentinel/singleton rows into that tenant (data a plain additive-column retrofit cannot infer).
  *
- * Invoked by {@see \Thallo\Tenancy\Enablement\TenancyEnablement::confirm()} inside the same
- * RETROFITTING try that runs the schema retrofit — a throwing contributor fails the whole step the
- * same way a failing retrofit does (recordFailure(RETROFITTING), resumable via retry()).
+ * Invoked inside the retrofit's flip ({@see \Thallo\Tenancy\Retrofit\SchemaRetrofit::run()} step 8):
+ * the one transaction that records the widened schema state, with the adoption gate closed — so
+ * resolvers switch from the sentinel to the default tenant at the same instant the rows move, and
+ * no unit of work that saw the sentinel overlaps the move. A throwing contributor rolls the flip
+ * back and fails the step the same way a failing retrofit does (recordFailure(RETROFITTING),
+ * resumable via retry()).
  */
 interface AdoptionContributor
 {
@@ -30,7 +33,8 @@ interface AdoptionContributor
 
     /**
      * Adopt sentinel rows into $tenantUuid. Runs as trusted system work (no tenant scoping) during
-     * RETROFITTING, after the schema has been widened and the default tenant provisioned.
+     * RETROFITTING, after the tables have been widened and the default tenant provisioned, inside the
+     * transaction that then records the widened state.
      */
     public function adopt(ApplicationContext $context, string $tenantUuid): void;
 }
