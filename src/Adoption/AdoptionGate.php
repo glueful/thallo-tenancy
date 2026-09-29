@@ -7,73 +7,103 @@ namespace Thallo\Tenancy\Adoption;
 use Glueful\Database\Connection;
 use PDO;
 use PDOException;
+use Thallo\Tenancy\Retrofit\RetrofitInProgressException;
+use WeakMap;
+use WeakReference;
 
 /**
  * Keeps single-store work and the adoption flip apart (PostgreSQL shared/exclusive advisory lock).
  *
  * A unit of work — a request, a job, a command — that resolves the single store's '' tenant
  * {@see holdShared() holds} the gate shared from BEFORE it reads the tenancy mode until it ends:
- * the lock lives on a dedicated session that closes with the process, or earlier through
- * {@see release()}. The flip that widens the schema and moves unassigned rows into the default
- * tenant closes the gate {@see acquireExclusive() exclusively} around that move. So no unit that
+ * the lock lives on the unit's own database session, so it costs one round trip and no extra
+ * connection, and it ends with the session, or earlier through {@see release()}. The flip that
+ * widens the schema and moves unassigned rows into the default tenant closes the gate
+ * {@see acquireExclusive() exclusively} around that move, from a session of its own. So no unit that
  * saw the single store can overlap the move — none reads an emptied partition or writes a fresh ''
  * row after it — and a unit that tries during the move is refused instead of waiting.
+ *
+ * Holds are kept per database session, not per instance: Connection shares one session per process
+ * and configuration, so a second container booted in the process (tests do) sees and can release the
+ * same hold. A session that reconnects mid-unit has lost its lock with it; the next hold then fails
+ * closed rather than carry on as if nothing had happened, because what the unit read before may
+ * already be stale.
  *
  * Deliberately NOT {@see \Thallo\Tenancy\Retrofit\MutationBoundaryLock}'s key: that lock is held
  * per statement and taken without a timeout; this one is held for a whole unit and waited on with
  * one, so a worker that holds it indefinitely fails the flip resumably instead of hanging it.
- * The hold belongs to the PROCESS, not to one instance: a process is one unit of work, and a
- * second container booted in it (tests do) must neither hold twice nor keep a hold nobody can
- * release. It is kept per database — advisory locks never conflict across databases, so a hold
- * taken in another database guards nothing here. Other drivers have no retrofit, so the gate is
- * open there.
+ * Other drivers have no retrofit, so the gate is open there.
  */
 final class AdoptionGate
 {
     private const KEY = 4823712;
 
-    private static ?PDO $participantPdo = null;
-    private static ?string $participantDatabase = null;
-    private static bool $held = false;
+    /** @var WeakMap<PDO, true>|null the sessions that hold the gate shared */
+    private static ?WeakMap $holds = null;
+
+    /** @var WeakReference<PDO>|null the session this gate last held on */
+    private ?WeakReference $heldOn = null;
+
     private ?PDO $maintenancePdo = null;
-    private ?string $database = null;
     private bool $exclusive = false;
 
     public function __construct(private readonly Connection $connection)
     {
     }
 
-    /** Hold the gate shared for the rest of this unit of work; false while a flip holds it. */
+    /**
+     * Hold the gate shared for the rest of this unit of work; false while a flip holds it.
+     *
+     * @throws RetrofitInProgressException when the unit's session reconnected and lost its hold
+     */
     public function holdShared(): bool
     {
-        if (!$this->supported() || $this->isHeld()) {
+        if (!$this->supported()) {
             return true;
         }
+        $pdo = $this->connection->getPDO();
+        if (isset(self::holds()[$pdo])) {
+            return true;
+        }
+        if ($this->heldOn !== null) {
+            $lostOn = $this->heldOn->get();
+            $this->heldOn = null;
+            if ($lostOn !== $pdo) {
+                throw new RetrofitInProgressException();
+            }
+        }
 
-        $value = $this->participant()
-            ->query('SELECT pg_try_advisory_lock_shared(' . self::KEY . ')')
-            ->fetchColumn();
+        $value = $pdo->query('SELECT pg_try_advisory_lock_shared(' . self::KEY . ')')->fetchColumn();
+        if (!($value === true || $value === '1' || $value === 1 || $value === 't')) {
+            return false;
+        }
+        self::holds()[$pdo] = true;
+        $this->heldOn = WeakReference::create($pdo);
 
-        return self::$held = ($value === true || $value === '1' || $value === 1 || $value === 't');
+        return true;
     }
 
     public function isHeld(): bool
     {
-        return self::$held && $this->supported() && self::$participantDatabase === $this->database();
+        return $this->supported() && isset(self::holds()[$this->connection->getPDO()]);
     }
 
     /** End this unit of work's hold early (the session's close ends it otherwise). */
     public function release(): void
     {
-        if (!$this->isHeld()) {
+        $this->heldOn = null;
+        if (!$this->supported()) {
             return;
         }
+        $pdo = $this->connection->getPDO();
+        if (!isset(self::holds()[$pdo])) {
+            return;
+        }
+        unset(self::holds()[$pdo]);
         try {
-            $this->participant()->exec('SELECT pg_advisory_unlock_shared(' . self::KEY . ')');
+            $pdo->query('SELECT pg_advisory_unlock_shared(' . self::KEY . ')')->fetchColumn();
         } catch (PDOException) {
-            self::$participantPdo = null; // the session is gone, and its lock with it
-        } finally {
-            self::$held = false;
+            // The session is gone, and its lock with it.
         }
     }
 
@@ -118,27 +148,15 @@ final class AdoptionGate
         $this->exclusive = false;
     }
 
+    /** @return WeakMap<PDO, true> */
+    private static function holds(): WeakMap
+    {
+        return self::$holds ??= new WeakMap();
+    }
+
     private function supported(): bool
     {
         return $this->connection->getDriverName() === 'pgsql';
-    }
-
-    private function participant(): PDO
-    {
-        if (self::$participantDatabase !== $this->database()) {
-            self::$participantPdo = null; // closing another database's session ends its hold there
-            self::$held = false;
-            self::$participantDatabase = $this->database();
-        }
-
-        return self::$participantPdo ??= $this->connection->newPdo();
-    }
-
-    private function database(): string
-    {
-        return $this->database ??= (string) $this->connection->getPDO()
-            ->query('SELECT current_database()')
-            ->fetchColumn();
     }
 
     private function maintenance(): PDO
