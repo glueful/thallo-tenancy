@@ -396,6 +396,12 @@ final class TenancyServiceProvider extends ServiceProvider implements DeclaresLo
                 'shared' => true,
                 'autowire' => true,
             ],
+            // One per process: a unit of work's hold must outlive any one resolver call.
+            \Thallo\Tenancy\Adoption\AdoptionGate::class => [
+                'class' => \Thallo\Tenancy\Adoption\AdoptionGate::class,
+                'shared' => true,
+                'autowire' => true,
+            ],
             MutationQuiescenceWrapper::class => [
                 'class' => MutationQuiescenceWrapper::class,
                 'shared' => true,
