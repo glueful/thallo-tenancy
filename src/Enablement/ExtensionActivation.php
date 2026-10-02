@@ -17,6 +17,7 @@ use Glueful\Extensions\PackageManifest;
 use Glueful\Extensions\Schema\ExtensionOperation;
 use Glueful\Extensions\Schema\ExtensionSchemaExecutor;
 use Glueful\Support\Version;
+use Thallo\Contracts\Extensions\ExtensionStateCoordinator;
 
 class ExtensionActivation implements ExtensionActivationContract
 {
@@ -76,6 +77,14 @@ class ExtensionActivation implements ExtensionActivationContract
             throw new \RuntimeException('glueful/tenancy is not installed.');
         }
 
+        $this->withinExtensionStateLock(fn () => $this->writeEnabled($candidates));
+    }
+
+    /** @param array<string,\Glueful\Extensions\ExtensionCandidate> $candidates */
+    private function writeEnabled(array $candidates): void
+    {
+        // Under the lock, read the list as it is now, not as this context cached it earlier.
+        $this->context->clearConfigCache();
         $current = EnabledProviders::from($this->context);
         $enabled = in_array(self::PROVIDER, $current, true)
             ? $current
@@ -104,6 +113,12 @@ class ExtensionActivation implements ExtensionActivationContract
 
     public function deactivate(): void
     {
+        $this->withinExtensionStateLock(fn () => $this->writeDisabled());
+    }
+
+    private function writeDisabled(): void
+    {
+        $this->context->clearConfigCache();
         $current = EnabledProviders::from($this->context);
         $enabled = array_values(array_diff($current, [self::PROVIDER]));
         $resolution = (new ExtensionResolver())->resolve($this->candidates(), $enabled, Version::VERSION);
@@ -121,6 +136,20 @@ class ExtensionActivation implements ExtensionActivationContract
         // app modules, resolved from the just-written (not pre-write cached) enabled list.
         $this->context->clearConfigCache();
         app($this->context, ExtensionManager::class)->writeCacheNow();
+    }
+
+    /**
+     * Runs a change to the enabled list, from reading it through rebuilding the extension cache,
+     * holding the extension-state lock when the application binds one; otherwise unlocked.
+     */
+    private function withinExtensionStateLock(callable $sequence): void
+    {
+        $container = $this->context->getContainer();
+        if ($container->has(ExtensionStateCoordinator::class)) {
+            $container->get(ExtensionStateCoordinator::class)->within($sequence);
+            return;
+        }
+        $sequence();
     }
 
     /**
