@@ -35,7 +35,7 @@ whose owning package is `glueful/tenancy`. A new install is one site with tenanc
 Workspaces are turned on only through the enablement flow: **Settings › Workspaces** in the admin,
 or `php glueful thallo:tenancy:enable` from a shell. The engine's enforcement provider is listed
 under `protected` in `config/extensions.php`, so `php glueful extensions:enable glueful/tenancy`
-refuses it, and the **Extensions › Capabilities** switchboard cannot turn it on either: while
+refuses it, and the **Features** switchboard cannot turn it on either: while
 enforcement is off, enabling there answers 409 with a remedy that points at Settings › Workspaces.
 
 ## Documentation
