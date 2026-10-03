@@ -23,6 +23,9 @@ use Glueful\Extensions\ServiceProvider;
 use PDO;
 use Psr\Container\ContainerInterface;
 use Thallo\Contracts\Capability\Capability;
+use Thallo\Contracts\Capability\ManagementMode;
+use Thallo\Contracts\Capability\ExternalFlowDestination;
+use Thallo\Contracts\Capability\DeclaresCapabilities;
 use Thallo\Contracts\Capability\CapabilityRegistry;
 use Thallo\Contracts\Settings\SystemChannel;
 use Thallo\Contracts\Tenancy\WriteBarrier;
@@ -88,7 +91,7 @@ use Thallo\Tenancy\Reverification\DomainReverificationSweep;
 use Thallo\Tenancy\Reverification\DomainReverificationSweepLock;
 use Thallo\Tenancy\Reverification\DomainReverificationAuditListener;
 
-final class TenancyServiceProvider extends ServiceProvider implements DeclaresLoadOrder
+final class TenancyServiceProvider extends ServiceProvider implements DeclaresLoadOrder, DeclaresCapabilities
 {
     public static function loadAfter(): array
     {
@@ -636,16 +639,23 @@ final class TenancyServiceProvider extends ServiceProvider implements DeclaresLo
         $this->mergeConfig('thallo_tenancy', require __DIR__ . '/../config/tenancy.php');
     }
 
+    public function capabilities(): array
+    {
+        return [
+            new Capability(
+                'thallo.tenancy',
+                label: 'Multi-tenancy',
+                description: 'Tenant-owned content model + data, scoping, seed/sync and enablement.',
+                owningPackage: 'glueful/tenancy',
+                management: ManagementMode::ExternalFlow,
+                destination: new ExternalFlowDestination('/settings/workspaces', 'Settings › Workspaces'),
+            ),
+        ];
+    }
+
     public function boot(ApplicationContext $context): void
     {
         $registry = app($context, CapabilityRegistry::class);
-
-        $registry->register(new Capability(
-            'thallo.tenancy',
-            label: 'Multi-tenancy',
-            description: 'Tenant-owned content model + data, scoping, seed/sync and enablement.',
-            owningPackage: 'glueful/tenancy',
-        ));
 
         // Migrations load unconditionally (outside any gate) so the system-channel table exists
         // for every install — the retrofit that adds tenant_uuid is NOT here (it is an
