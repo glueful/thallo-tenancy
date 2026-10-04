@@ -100,6 +100,21 @@ final class ThalloTenantTables
             // only ever reads the workspace's own rows — also for an all-access API key, where no
             // content-type filter narrows the query.
             'search_documents' => self::row($inst, [['uniq_search_documents_doc', ['tenant_uuid', 'doc_id']]]),
+            // The search index's lifecycle (search block spec §3.5.1): each workspace's state, journal,
+            // acknowledgements and rebuild demand are its own, like its documents.
+            'search_index_state' => self::row($inst, [['uniq_search_index_state_kind', ['tenant_uuid', 'kind']]]),
+            'search_index_changes' => self::row(
+                $inst,
+                [['uniq_search_index_changes_seq', ['tenant_uuid', 'kind', 'seq']]],
+            ),
+            'search_index_acks' => self::row(
+                $inst,
+                [['uniq_search_index_acks_target', ['tenant_uuid', 'kind', 'entry_seq', 'target']]],
+            ),
+            'search_index_demand' => self::row(
+                $inst,
+                [['uniq_search_index_demand_seq', ['tenant_uuid', 'kind', 'seq']]],
+            ),
             'analytics_facts' => self::row($inst),
             'analytics_daily' => self::row($inst, [[null, ['tenant_uuid', 'day', 'event', 'subject']]]),
             'analytics_active_actors' => self::row(
