@@ -82,6 +82,12 @@ final class ThalloTenantTables
             'media_assets' => self::row($inst, [], 'media_assets'),
             'media_meta' => self::row($inst),
             'media_usage' => self::row($inst),
+            // The font library (block typeface spec §2.3): the workspace's uploaded families and their
+            // faces (media files). font_faces' one-face-per-file unique is created over
+            // COALESCE(tenant_uuid, '') by its migration, so it holds before and after widening and is
+            // not a widened unique (as for layouts).
+            'font_families' => self::row($inst),
+            'font_faces' => self::row($inst),
             // settings: the site subset is tenant-owned (system keys move to the channel). INSTANCE
             // (per-tenant site data/config), NOT a schema definition — matters for divergence
             // checks + diagnostics. PK is `key` => (tenant_uuid, key), so needs a rebuild backfill.
