@@ -26,11 +26,18 @@ final class TenantCacheSegment
             throw new MissingTenantForCacheException($surface);
         }
 
-        $tenantUuid = $this->resolver->tenantUuid($context);
+        return $this->segmentFor($this->resolver->tenantUuid($context), $surface);
+    }
+
+    /** The key prefix of workspace `$tenantUuid` ('' while tenancy is off). */
+    public function segmentFor(string $tenantUuid, string $surface = 'cache'): string
+    {
+        if (!$this->flags->tenancyEnabled()) {
+            return '';
+        }
         if ($tenantUuid === '') {
             throw new MissingTenantForCacheException($surface);
         }
-
         return 'tenant:' . $tenantUuid . ':';
     }
 }
