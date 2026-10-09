@@ -56,6 +56,8 @@ final class ThalloTenantTables
             'style_classes' => self::row($def, [['uniq_style_class_name_key', ['tenant_uuid', 'name_key']]]),
             'style_generations' => self::row($def, [['uniq_style_generation_site', ['tenant_uuid', 'site']]]),
             'style_class_jobs' => self::row($def),
+            'palette_state' => self::row($def, [['uniq_palette_state_site', ['tenant_uuid', 'site']]]),
+            'palette_jobs' => self::row($def),
             'saved_sections' => self::row($def),
             'layouts' => self::row($def),
             'regions' => self::row($def, [], 'rebuild'), // PK is `slug` => (tenant_uuid, slug)
