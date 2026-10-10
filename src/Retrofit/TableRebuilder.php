@@ -166,6 +166,8 @@ final class TableRebuilder
             . '    "settings" jsonb,' . "\n"
             . '    "updated_at" timestamp,' . "\n"
             . '    "updated_by" varchar(12),' . "\n"
+            // Migration 023's settings-schema stamp: every walker over region blocks reads it.
+            . '    "schema_stamp" jsonb,' . "\n"
             // Migration 026's conditional-write version: region saves compare it.
             . '    "lock_version" integer NOT NULL DEFAULT 0,' . "\n"
             . '    ' . $tenant . ',' . "\n"
@@ -236,7 +238,7 @@ final class TableRebuilder
     private function sourceColumns(string $logical): array
     {
         return match ($logical) {
-            'regions' => ['slug', 'blocks', 'settings', 'updated_at', 'updated_by', 'lock_version'],
+            'regions' => ['slug', 'blocks', 'settings', 'updated_at', 'updated_by', 'schema_stamp', 'lock_version'],
             'settings' => ['key', 'value', 'updated_at'],
             'entry_redirects' => [
                 'id', 'uuid', 'content_type_uuid', 'locale', 'source_slug',
